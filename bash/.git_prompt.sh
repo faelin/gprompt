@@ -1,3 +1,12 @@
+COLOR_RED='\033[91m'
+COLOR_GREEN='\033[92m'
+COLOR_YELLOW='\033[93m'
+COLOR_PINK='\033[95m'
+COLOR_RESET='\033[0m'
+STYLE_BOLD='\033[1m'
+STYLE_RESET='\033[22m'
+
+
 parse_git_branch() {
 	mod_count=$(git ls-files -d -m -o --no-empty-directory --exclude-standard 2> /dev/null | wc -l | sed -E "s/^ +0$//; s/ +([0-9]+)/ <\1>/")
 	git_status=$(git branch -v 2> /dev/null | grep '^* ' | sed -E "s/^\* ([^ ]+) [A-Za-z0-9]+( \[(behind|ahead) ([0-9]+)\])? .*$/[\1\2${mod_count}]/")
@@ -5,7 +14,7 @@ parse_git_branch() {
 	echo $git_status
 }
 print_git_branch() {
-	parse_git_branch | sed -E "s/^\[([^~+ ]+)(~[0-9]+)?(\+[0-9]+)?( <[0-9]+>)?\]$/$(echo -e " \033[1;33m[\1\033[31m\2\033[33m\033[92m\3\033[33m\033[95m\4\033[33m]\033[0m")/"
+	parse_git_branch | sed -E "s/^\[([^~+ ]+)(~[0-9]+)?(\+[0-9]+)?( <[0-9]+>)?\]$/$(echo -e " ${STYLE_BOLD}${COLOR_YELLOW}[\1${COLOR_RED}\2${COLOR_GREEN}\3${COLOR_PINK}\4${COLOR_YELLOW}]${COLOR_RESET}")/"
 }
  
 parse_git_branch_with_repo() {
@@ -13,7 +22,7 @@ parse_git_branch_with_repo() {
 	parse_git_branch | sed -E "s/^\[(.*)\]$/[${repo_name}:\1]/"
 }
 print_git_branch_with_repo() {
-	parse_git_branch_with_repo | sed -E "s/^\[([^:]+)(:[^~+ ]+)(~[0-9]+)?(\+[0-9]+)?( <[0-9]+>)?\]$/$(echo -e " \033[1;33m[\033[22;21m\1\033[1m\2\033[31m\3\033[33m\033[92m\4\033[33m\033[95m\5\033[33m]\033[0m")/"
+	parse_git_branch_with_repo | sed -E "s/^\[([^:]+)(:[^~+ ]+)(~[0-9]+)?(\+[0-9]+)?( <[0-9]+>)?\]$/$(echo -e " ${STYLE_BOLD}${COLOR_YELLOW}[${STYLE_RESET}\1${STYLE_BOLD}\2${COLOR_RED}\3${COLOR_GREEN}\4${COLOR_PINK}\5${COLOR_YELLOW}]${COLOR_RESET}")/"
 }
  
 is_git_branch() {
