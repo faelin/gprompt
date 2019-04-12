@@ -30,8 +30,8 @@ is_git_branch() {
 #
 #
 ##   EITHER basename [git_status] OR pwd (if not in a repo) $>
-export PS1='\[\033[1;34m`[ "$(is_git_branch)" ] && basename $(pwd) || pwd`\033[0m\]\[$(print_git_branch)\]\[\033[97m\] \$> \[\033[0m\]'
-#export PS1='\[\033[1;34m`[ "$(is_git_branch)" ] && basename $(pwd) || pwd`\033[0m\]\[$(print_git_branch_with_repo)\]\[\033[97m\] \$> \[\033[0m\]'
+#export PS1='\[\033[1;34m`[ "$(is_git_branch)" ] && basename $(pwd) || pwd`\033[0m\]\[$(print_git_branch)\]\[\033[97m\] \$> \[\033[0m\]'
+export PS1='\[\033[1;34m`[ "$(is_git_branch)" ] && basename $(pwd) || pwd`\033[0m\]\[$(print_git_branch_with_repo)\]\[\033[97m\] \$> \[\033[0m\]'
 #
 # 
 ##   pwd [git_status] $>
