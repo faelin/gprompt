@@ -14,44 +14,83 @@ COLOR_STAGED='\e[96m'
 #
 #
 
-
 TOTAL_RESET='\e[0m'
 STYLE_BOLD='\e[1m'
 STYLE_RESET='\e[22m'
 
-L_BRK='\['
-R_BRK='\]'
-LL_BRK='\\['
-RR_BRK='\\]'
-LPAREN='\\('
-RPAREN='\\)'
 
-get_repo_name() {
-	basename -s .git $( git config --get remote.origin.url ) 2> /dev/null
-}
-parse_git_status() {
-	staged_count=$( git status --porcelain=1 2> /dev/null | grep -e '^[^?! ]' | wc -l | sed -E "s/([0-9]+``)/<\1>/; s/\<0\>//" | xargs )
-	unstag_count=$( git status --porcelain=1 2> /dev/null | grep -e '^.[^ ]'  | wc -l | sed -E "s/([0-9]+)/(\1)/; s/\(0\)//" | xargs )
-	file_state=$( [ ${unstag_count} ] || [ ${staged_count} ] && echo ' '${staged_count}${unstag_count} )
-	git_state=$( git branch -v 2> /dev/null | grep '^* ' | sed -E "s/^\* ([^ ]+) [A-Za-z0-9]+( \[(behind|ahead) ([0-9]+)\])? .*$/[\1\2$file_state]/" )
-	git_state=$( echo $git_state | sed -E "s/ \[behind ([0-9]+)\]/~\1/; s/ \[ahead ([0-9]+)\]/+\1/" )
-	echo $git_state
-}
-parse_git_status_with_repo() {
-	parse_git_status | sed -E "s/^\[(.*)\]$/[$(get_repo_name):\1]/"
+GPROMPT_FORMAT='{[%r:%b%~%+{ {<%s>}{(%u)}}]}%d $>'
+#GPROMPT_FORMAT='{%p[%r:%b%~%+ <%s>(%u)]}%d $> '
+#GPROMPT_FORMAT='[%r:%b%~%+ <%s>(%u)] Git://%r%d $> '
+#GPROMPT_FORMAT='%p [%b%~%+ <%s>(%u)]'
+GPROMPT_WRAPPER=' '
+
+get_git_status() {
+  full_path=$( pwd )
+  repo_name=$( basename -s .git $( git config --get remote.origin.url ) 2> /dev/null | xargs )
+
+  part_path=$( [ $repo_name ] && sed -nE "s|^(.*)/$repo_name(/.*)?$|\1|p" <<< $pre_path )
+  repo_path=$( [ $repo_name ] && sed -nE "s|^.*/$repo_name(/.*)?$|\1|p" <<< $repo_path || echo "$full_path" )
+  [ -z $repo_name ] && return 1
+
+  branch_status=$( [ $repo_name ] && git branch -v 2> /dev/null | grep '^* ' | xargs )
+
+  staged_count=$(  [ $repo_name ] && git status --porcelain=1 2> /dev/null | grep -e '^[^?! ]' | wc -l | sed -E 's|0||' | xargs )
+  unstag_count=$(  [ $repo_name ] && git status --porcelain=1 2> /dev/null | grep -e '^.[^ ]'  | wc -l | sed -E 's|0||' | xargs )
+
+  branch_name=$(  [ $repo_name ] && sed -nE 's|^[[:blank:]]*\*[[:blank:]]+([^[[:blank:]]+)[[:blank:]].*|\1|p' <<< $branch_status  )
+  ahead_count=$(  [ $repo_name ] && sed -nE 's|^[[:blank:]]*\*[[:blank:]]+[^[[:blank:]]+[[:blank:]]+(\[ahead[[:blank:]]+([[:digit:]]+)\])?.*|\2|2' <<< $branch_status  | xargs )
+  behind_count=$( [ $repo_name ] && sed -nE 's|^[[:blank:]]*\*[[:blank:]]+[^[[:blank:]]+[[:blank:]]+(\[behind[[:blank:]]+([[:digit:]]+)\])?.*|\2|2' <<< $branch_status  | xargs )
 }
 
-colorize_git_status() {
-	echo "sed -E 's|^${LL_BRK}([^:]+:)?([^~+\] ]+)(~[[:digit:]]+)?(\+[[:digit:]]+)?( )?(<[[:digit:]]+>)?(${LPAREN}[[:digit:]]+${RPAREN})?.*${RR_BRK}$|${L_BRK}${STYLE_BOLD}${COLOR_TITLE}${R_BRK}${L_BRK}[${STYLE_RESET}${R_BRK}\1${L_BRK}${STYLE_BOLD}${R_BRK}\2${L_BRK}${COLOR_BEHIND}${R_BRK}\3${L_BRK}${COLOR_AHEAD}${R_BRK}\4\5${L_BRK}${COLOR_STAGED}${R_BRK}\6${L_BRK}${COLOR_UNSTAGED}${R_BRK}\7${L_BRK}${COLOR_TITLE}${R_BRK}]${L_BRK}${TOTAL_RESET}${R_BRK}|'"
+strip_git_prompt() {
+  read gprompt_input
+  if [ -z $repo_name ];  ## if pwd is not a git repo
+  then
+    ## strip all non-escaped-curly-brace wrapped content, recursively from the inside out
+    while [ "$( grep -E '(^|[^\\]){([^{}\\]+|\\[^{}]|\\\\|\\{|\\})*}' <<< $gprompt_input  )" ]
+    do
+      gprompt_input=$( sed -E 's/(^|[^\\]){([^{}\\]+|\\[^{}]|\\\\|\\{|\\})*}/\1/g' <<< $gprompt_input  )
+    done
+  else
+    ## strip all "empty" (not [A-Za-z0-9\s_-]) non-escaped-curly-brace wrapped content, recursively from the inside out
+    while [ "$( grep -E '(^|[^\\]){([^{}[:alnum:][:blank:]_-]*|[[:blank:]]+)}' <<< $gprompt_input  )" ]
+    do
+      gprompt_input=$( sed -E 's/(^|[^\\]){([^{}[:alnum:][:blank:]_-]*|[[:blank:]]+)}/\1/g' <<< $gprompt_input  )
+    done
+  fi
+
+  ## strip all non-escaped curly braces, from left to right
+  while [ "$( grep -E '(^|[^\\])[{}]' <<< $gprompt_input )" ]
+  do
+    gprompt_input=$( sed -E 's/(^|[^\\])[{}]/\1/g' <<< $gprompt_input  )
+  done
+
+  echo "$gprompt_input"
 }
 
-long_path_or_pwd() {
- 	[ get_repo_name ] && pwd | sed -E "s|^.*/($(get_repo_name)(/[^[:space:]]*)?)$| Git://\1|" || pwd
+parse_git_format() {
+  sed -e "s|%r|$repo_name|g" \
+      -e "s|%d|$repo_path|g" \
+      -e "s|%p|$part_path|g" \
+      -e "s|%p|$full_path|g" \
+      -e "s|%b|$branch_name|g" \
+      -e "s|%+|$ahead_count|g" \
+      -e "s|%~|$behind_count|g" \
+      -e "s|%s|$staged_count|g" \
+      -e "s|%u|$unstag_count|g" \
+      <<< $GPROMPT_FORMAT
+## this line intentionally left blank
 }
-local_path_or_pwd() {
- 	[ get_repo_name ] && pwd | sed -E "s|^.*/$(get_repo_name)/?([^[:space:]]*)?$|/\1|" || pwd
+
+colorize_git_prompt() {
+	sed -E "s|^\[([^:]+:)?([^~+\] ]+)(~[[:digit:]]+)?(\+[[:digit:]]+)?( )?((<[[:digit:]]+>)?)((\([[:digit:]]+\))?).*\].*$|\[$STYLE_BOLD$COLOR_TITLE\]\[[$STYLE_RESET\]\1\[$STYLE_BOLD\]\2\[$COLOR_BEHIND\]\3\[$COLOR_AHEAD\]\4\5\[$COLOR_STAGED\]\6\[$COLOR_UNSTAGED\]\8\[$COLOR_TITLE\]]\[$TOTAL_RESET\]|"
 }
- 
+
+generate_git_prompt() {
+  get_git_status
+  parse_git_format | strip_git_prompt
+}
 ### PS1 OPTIONS:
 ### these PS1 prompts will show you the branchname (if in a git repo), number of commits behind (if any), and number of modified files (if any)
 ### for each prompt type, the first (1st) option will show you only the git-branch and status, while the second (2nd) will show you the project and branch
@@ -70,24 +109,7 @@ local_path_or_pwd() {
 ###       [my_proj:stuff+2]   is on the 'stuff'  branch of the 'my_proj' repo (the repo you are in), two (2) commits ahead of the remote HEAD
 #
 #
-##   EITHER basename [git_state] OR pwd (if not in a repo) $>
-#export PS1=" \$( parse_git_status | $(colorize_git_status) )\$( long_path_or_pwd ) \[${STYLE_BOLD}\]\$>\[${STYLE_RESET}\] "
-export PS1=" \$( parse_git_status_with_repo | $(colorize_git_status) )\$( local_path_or_pwd ) \[${STYLE_BOLD}\]\$>\[${STYLE_RESET}\] "
-#
-# 
-##   pwd [git_state] $>
-#export PS1="\[\033[1;34m\]\w\[\033[0m\]\$(parse_git_status)\[\033[97m\] \$> \[\033[0m\]"
-#export PS1="\[\033[1;34m\]\w\[\033[0m\]$(color_git_status_with_repo)\[\033[97m\] \$> \[\033[0m\]"
-#
-#
-##   user@basename [git_state] $>
-#export PS1="\[\033[0m\]\u:\[\033[96m\]\W\[\033[0m\]$(color_git_status)\[\033[97m\] \$> \[\033[0m\]"
-#export PS1="\[\033[0m\]\u:\[\033[96m\]\W\[\033[0m\]$(color_git_status_with_repo)\[\033[97m\] \$> \[\033[0m\]"
-#
-#
-##   user:pwd [git_state] $>
-#export PS1="\[\033[39m\]\u:\[\033[96m\]\w\[\033[0m\]$(color_git_status)\[\033[97m\] \$> \[\033[0m\]"
-#export PS1="\[\033[39m\]\u:\[\033[96m\]\w\[\033[0m\]$(color_git_status_with_repo)\[\033[97m\] \$> \[\033[0m\]"
+export PS1='$GPROMPT_WRAPPER$( generate_git_prompt )$GPROMPT_WRAPPER'
 #
 #
 ###
