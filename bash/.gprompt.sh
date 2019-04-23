@@ -1,6 +1,6 @@
 #!/bin/sh
 
-gprompt_version='2019.04.23'
+gprompt_version='2019.04.23.1'
 
 
 ## ---------------- ##
@@ -13,6 +13,7 @@ gprompt() {
     case "$1" in
       -v|--version)
         echo "gprompt version $gprompt_version $( [ $gprompt_commit ] && echo "($gprompt_commit)" )"
+        shift
         return 0
         ;;
       init)
@@ -35,12 +36,19 @@ gprompt() {
         shift
         return 0
         ;;
-      --get-format)
+      --get-format|format)
         echo "$GPROMPT_FORMAT"
+        shift
         return 0
         ;;
-      --get-wrapper)
+      --get-wrapper|wrapper)
         echo "$GPROMPT_WRAPPER"
+        shift
+        return 0
+        ;;
+      --get-pathtype|pathtype)
+        echo "$GPROMPT_PATHTYPE"
+        shift
         return 0
         ;;
       --set-format|--format)
@@ -50,16 +58,29 @@ gprompt() {
           shift 2
         else
           echo "$GPROMPT_FORMAT"
+          shift
           return 0
         fi
         ;;
       --set-wrapper|--wrapper)
-        if grep -m 1 -ve '^--?|$^' <<< "$2"
+        if grep -m 1 -ve '^--?/$^' <<< "$2"
         then
           gprompt_set_wrapper "$2"
           shift 2
         else
           echo "$GPROMPT_WRAPPER"
+          shift
+          return 0
+        fi
+        ;;
+      --set-pathtype|--pathtype)
+        if grep -m 1 -ve '^--?|^$' <<< "$2"
+        then
+          gprompt_set_pathtype "$2"
+          shift 2
+        else
+          echo "$GPROMPT_PATHTYPE"
+          shift
           return 0
         fi
         ;;
@@ -71,6 +92,7 @@ gprompt() {
           shift
         else
           echo "    Option '$1' requires an argument."
+          shift
           return 1
         fi
         ;;
@@ -82,19 +104,34 @@ gprompt() {
           shift
         else
           echo "    Option '$1' requires an argument."
+          shift
           return 1
         fi
         ;;
-      --save)
-        gprompt_save
+      --set-pathtype=*|--pathtype=*)
+        opt=$( sed -nE "s/^--(set-)?pathtype=(.*)/\2/p" <<< $1 )
+        if [[ -n $opt ]]
+        then
+          gprompt_set_pathtype "$opt"
+          shift
+        else
+          echo "    Option '$1' requires an argument."
+          shift
+          return 1
+        fi
         ;;
-      -h|--help|*)
+      --save|save)
+        gprompt_save
+        shift
+        ;;
+      -h|--help|help|*)
         echo << EOHELP
 GPROMPT — customizable git status in your command prompt!
     version $gprompt_version
 
 usage: gprompt [--version] [--help] [-C <path>] 
 EOHELP
+        shift
         return 1
         ;;
     esac
@@ -120,8 +157,6 @@ EOHELP
   done
 }
 
-export -f gprompt
-
 
 
 ## --------------------- ##
@@ -135,7 +170,7 @@ export -f gprompt
 #
 gprompt_init() {
   export GPROMPT_OFF=${PS1}
-  gprompt_reload
+  gprompt_reload || return 1
   export PS1='$( gprompt_generate )'
 }
 
@@ -143,8 +178,9 @@ gprompt_init() {
 #      NOTE: this will overwrite your custom prompt formatting! Please back up your   ~/.gprompt/.gprompt_conf   before attempting a reset!
 #
 gprompt_reset() {
-  export GPROMPT_FORMAT='{\c{1;93}[\c22{%r}:\c1{%b}{\c91~{%~}}{\c92+{%+}}{ {\c96<{%s}>}{\c95({%u})}}\c93]\c0}%p $>'
+  export GPROMPT_FORMAT='{\c{1;93}[\c22{%r}:\c1{%b}{\c91-{%-}}{\c92+{%+}}{ {\c96<{%s}>}{\c95({%u})}}\c93]\c0}%d $>'
   export GPROMPT_WRAPPER=' '
+  export GPROMPT_PATHTYPE='abs'
   gprompt_save
 }
 
@@ -157,8 +193,9 @@ gprompt_reload() {
 
   if [ -f ~/.gprompt/.gprompt_conf ]
   then
-    gprompt_format_loaded="$(grep -m 1 -E "^GPROMPT_FORMAT='.*'" ~/.gprompt/.gprompt_conf)" && eval "export $gprompt_format_loaded"
-    gprompt_wrapper_loaded="$(grep -m 1 -E "^GPROMPT_WRAPPER='.*'" ~/.gprompt/.gprompt_conf)" && eval "export $gprompt_wrapper_loaded"
+    gprompt_format_loaded="$(grep -m 1 -E "^GPROMPT_FORMAT='[^']*'$" ~/.gprompt/.gprompt_conf)" && eval "export $gprompt_format_loaded" || return 1
+    gprompt_wrapper_loaded="$(grep -m 1 -E "^GPROMPT_WRAPPER='[^']*'$" ~/.gprompt/.gprompt_conf)" && eval "export $gprompt_wrapper_loaded" || return 1
+    gprompt_pathtype_loaded="$(grep -m 1 -E "^GPROMPT_PATHTYPE='[^']*'$" ~/.gprompt/.gprompt_conf)" && eval "export $gprompt_pathtype_loaded" || return 1
   else
     gprompt_reset
   fi
@@ -172,13 +209,55 @@ gprompt_off() {
 
 
 ## Sets the gprompt format
+#
+#     FORMAT CODES:
+#         ANSI Color Escapes:
+#              \c<integer>
+#              \c{<integer>[;...]}
+#
+#
 #     EXAMPLE FORMATS:
 #       {%d[%r:%b%~%+ <%s>(%u)]}%p $>
 #       {[%r:%b%~%+{(%c)} <%s>(%u)] Git://%r}%p $>
 #       {%d%r}%p{ [%b%~%+{(%c)} <%s>(%u)]} $>
 #
+#
+            # ## DIRECTORY INFO
+            # s;%(d(ir(ectory)?)?|{d(ir(ectory)?)?});$local_path;g
+            # s;%(p(arent)?|{p(arent)?});$parent_path;g;
+
+            # ## REPO INFO
+            # s;%(r(epo)?|{r(epo)?});$repo_name;g;
+            # s;%(b(ranch)?|{b(ranch)?});$branch_name;g;
+            # s;%(c(om(mit)?)?|{c(om(mit)?)?});$commit_hash;g;
+
+            # ## BRANCH STATE
+            # s;%(\+|{ahead});$ahead_count;g;
+            # s;%(\-|{behind});$behind_count;g;
+            # s;%(\~|{parent});$commit_parent;g;
+            # s;%(\^|{merged});$commit_merged;g;
+
+            # ## FILE STATUS MODES
+            # s;%(s(taged)?|{s(taged)?});$staged_count;g;
+            # s;%(u(nstaged)?|{u(nstaged)?});$unstag_count;g;
+
+            # ## FILE STATUS COUNTS
+            # s;%(mod(ified)?|{mod(ified)?});$mod_count;g;
+            # s;%(add(ed)?|{add(ed)?});$add_count;g;
+            # s;%(del(eted)?|{del(eted)?});$rem_count;g;
+            # s;%(rem(oved)?|{rem(oved)?});$rem_count;g;
+            # s;%(cop(y|ied)?|{cop(y|ied)?});$cop_count;g;
+            # s;%(re(named)?|{re(named)?});$re_count;g;
+            # s;%(up(dated)?|{up(dated)?});$up_count;g;
+            # s;%(un(merged)?|{un(merged)?});$un_count;g;
+            # s;%([?]|{untracked});$untracked_count;g;
+            # s;%([!]|{ignored});$ignored_count;g;
+#
+#
 gprompt_set_format() {
+
   export GPROMPT_FORMAT="$1"
+  return 0
 }
 
 ## Short string used to pad your prompt, recommended default is ' ' (single blank space)
@@ -187,15 +266,31 @@ gprompt_set_format() {
 #     while a wrapper '[(]' yields '[<gprompt>(]'
 gprompt_set_wrapper() {
   export GPROMPT_WRAPPER="$1"
+  return 0
+}
+
+## Type of path that should be displayed by %d when not in a git-repo
+#     options are:  'abs',  'rel'
+gprompt_set_pathtype() {
+  if [[ $1 == 'abs' ]] || [[ $1 == 'rel' ]]
+  then
+    export GPROMPT_WRAPPER="$1"
+    return 0
+  else
+    export GPROMPT_WRAPPER="abs"
+    return 1
+  fi
 }
 
 ## Overwrites the existing gprompt conf file with the currently exported gprompt definitions for your session.
 #
 gprompt_save() {
   (
-    echo "GPROMPT_FORMAT='$( sed -e "s/'/\'/g" <<< "$GPROMPT_FORMAT" )'" ;
-    echo "GPROMPT_WRAPPER='$( sed -e "s/'/\'/g" <<< "$GPROMPT_WRAPPER" )'" ;
+    echo "GPROMPT_FORMAT='$GPROMPT_FORMAT'" ;
+    echo "GPROMPT_WRAPPER='$GPROMPT_WRAPPER'" ;
+    echo "GPROMPT_PATHTYPE='$GPROMPT_PATHTYPE'" ;
   ) > ~/.gprompt/.gprompt_conf
+  return
 }
 
 
@@ -208,23 +303,59 @@ gprompt_save() {
 #     returns 0 before git-status variables would be updated, if PWD is not a git repo
 #
 gprompt_git_status() {
-  full_path=$( pwd )
+
+  ## full_path gives the PWD in relative or absolute form depending on the state of $GPROMPT_PATHTYPE
+  full_path=$( [[ $GPROMPT_PATHTYPE == 'rel' ]] && pwd -L | sed -E "s|^(/Users|/home)?/`whoami`(/.+)?|~\2|" || pwd -L )
   repo_name=$( basename -s .git $( git config --get remote.origin.url ) 2> /dev/null )
-  repo_path=$( [[ -n $repo_name ]] && sed -nE "s|^(.*)/$repo_name(/.*)?$|\2|p" <<< "$full_path" || echo "$full_path" )
 
   if [[ -n $repo_name ]]
   then
-    branch_status=$( git branch -v 2> /dev/null | grep '^* ' )
 
-    staged_count=$( git status --porcelain=1 2> /dev/null | grep -e '^[^?! ]' | wc -l | sed -E 's|0||' | xargs )
-    unstag_count=$( git status --porcelain=1 2> /dev/null | grep -e '^.[^ ]'  | wc -l | sed -E 's|0||' | xargs )
+    repo_status=$( git status --branch --ignored --porcelain=2 )
+    repo_parent=$( git show -s --format='%P' HEAD )
+    parent_path=$( sed -nE "s|^(.*)/$repo_name(/.*)?$|\1|p" <<< "$full_path" )
+    local_path=$(  sed -nE "s|^(.*)/$repo_name(/.*)?$|\2|p" <<< "$full_path" )
 
-    branch_name=$(  sed -nE 's|^[[:blank:]]*\*[[:blank:]]+([^[[:blank:]]+)[[:blank:]]+[^[:blank:]]+[[:blank:]]+.*|\1|p' <<< "$branch_status" | xargs  )
-    commit_name=$(  sed -nE 's|^[[:blank:]]*\*[[:blank:]]+[^[[:blank:]]+[[:blank:]]+([^[:blank:]]+)[[:blank:]]+.*|\1|p' <<< "$branch_status" | xargs  )
-    ahead_count=$(  sed -nE 's|^[[:blank:]]*\*[[:blank:]]+[^[:blank:]]+[[:blank:]]+[^[:blank:]]+[[:blank:]]+(\[ahead[[:blank:]]+([[:digit:]]+)\])?.*|\2|p' <<< "$branch_status" | xargs  )
-    behind_count=$( sed -nE 's|^[[:blank:]]*\*[[:blank:]]+[^[:blank:]]+[[:blank:]]+[^[:blank:]]+[[:blank:]]+(\[behind[[:blank:]]+([[:digit:]]+)\])?.*|\2|p' <<< "$branch_status" | xargs )
+    ## looks like:
+    ##   '<parent1 SHA> <parent2 SHA>'
+    commit_parent=$( sed -nE 's!^([[:alnum:]]{7}).*$!\1!p' <<< "$repo_parent" )
+    commit_merged=$( sed -nE 's!^([[:alnum:]]{7})[[:alnum:]]+ ([[:alnum:]]{7}).*$!\2!p' <<< "$repo_parent" )
 
-    lead_path=$( sed -nE "s|^(.*)/$repo_name(/.*)?$|\1|p" <<< "$full_path" )
+
+    ## looks like:
+    ##   '# branch.oid <commit> | (initial)'        Current commit.
+    ##   '# branch.head <branch> | (detached)'      Current branch.
+    ##   '# branch.upstream <upstream_branch>'      If upstream is set.
+    ##   '# branch.ab +<ahead> -<behind>'           If upstream is set and the commit is present.
+    commit_hash=$(  sed -nE 's!^# branch.oid \(?([[:alnum:]]{7}|initial)\)?.*$!\1!p' <<< "$repo_status"  )
+    branch_name=$(  sed -nE 's!^# branch.head \(?(.*)\)?$!\1!p' <<< "$repo_status"  )
+    origin_name=$(  sed -nE 's!^# branch.upstream (.*)$!\1!p' <<< "$repo_status"  )
+    ahead_count=$(  sed -nE 's!^# branch.ab \+([[:digit:]]+) -([[:digit:]]+)$!\1!p' <<< "$repo_status" | sed -nE 's/[[:blank:]]*0*([1-9][0-9]*)/\1/p'  )
+    behind_count=$( sed -nE 's!^# branch.ab \+([[:digit:]]+) -([[:digit:]]+)$!\2!p' <<< "$repo_status" | sed -nE 's/[[:blank:]]*0*([1-9][0-9]*)/\1/p' )
+    staged_count=$( grep -cE '^[[:alnum:]]+ [^[:blank:].][^[:blank:]]' <<< "$repo_status" | sed -nE 's/[[:blank:]]*0*([1-9][0-9]*)/\1/p' )
+    unstag_count=$( grep -cE '^[[:alnum:]]+ [^[:blank:]][^[:blank:].]' <<< "$repo_status"  | sed -nE 's/[[:blank:]]*0*([1-9][0-9]*)/\1/p' )
+
+
+    ## reference:
+    ##   M = modified
+    ##   A = added
+    ##   D = deleted
+    ##   C = copied
+    ##   R = renamed
+    ##   U = updated but unmerged
+    ##   ! = ignored
+    ##   ? = untracked
+    mod_count=$( grep -cE '^.M' <<< "$repo_status" | sed -nE 's/[[:blank:]]*0*([1-9][0-9]*)/\1/p' )
+    add_count=$( grep -cE '^.A' <<< "$repo_status" | sed -nE 's/[[:blank:]]*0*([1-9][0-9]*)/\1/p' )
+    del_count=$( grep -cE '^.D' <<< "$repo_status" | sed -nE 's/[[:blank:]]*0*([1-9][0-9]*)/\1/p' )
+    cop_count=$( grep -cE '^.C' <<< "$repo_status" | sed -nE 's/[[:blank:]]*0*([1-9][0-9]*)/\1/p' )
+    re_count=$(  grep -cE '^.D' <<< "$repo_status" | sed -nE 's/[[:blank:]]*0*([1-9][0-9]*)/\1/p' )
+    up_count=$(  grep -cE '^.U' <<< "$repo_status" | sed -nE 's/[[:blank:]]*0*([1-9][0-9]*)/\1/p' )
+    ignored_count=$(   grep -ce '^!!' <<< "$repo_status" | sed -nE 's/[[:blank:]]*0*([1-9][0-9]*)/\1/p' )
+    untracked_count=$( grep -ce '^??' <<< "$repo_status" | sed -nE 's/[[:blank:]]*0*([1-9][0-9]*)/\1/p' )
+
+  else
+    local_path="$full_path"
   fi
 }
 
@@ -232,37 +363,106 @@ gprompt_git_status() {
 #     exclamation points ('!') in  sed  substitutions are purely to increase legibility amonst a lot of backslashes
 #
 gprompt_parse_format() {
-  sed -E '
-            s!\\c(([[:digit:]]+)|{([[:digit:];]+)})(\\c(([[:digit:]]+)|{([[:digit:];]+)}))?!\\001\\033[\2\3;\5\6m\\002!g;
-            # s!((\\e\[([[:digit:]]+;)+m)+)!\[\1\]!g;
-            # s!\\t<([[:digit:]]+)>!\e[\2\3m!g;
-         ' <<< "$GPROMPT_FORMAT"
+  gprompt_string="$GPROMPT_FORMAT"
+
+  ## merge all parallel color format markers
+  while [[ $( grep -E '\\c(([[:digit:]]+)|{([[:digit:];]+)})\\c(([[:digit:]]+)|{([[:digit:];]+)})' <<< "$gprompt_string" ) ]]
+  do
+    gprompt_string="$( sed -E 's!\\c(([[:digit:]]+)|{([[:digit:];]+)})\\c(([[:digit:]]+)|{([[:digit:];]+)})!\\c{\2\3;\5\6}!g' <<< "$gprompt_string" )"
+  done
+
+
+  gprompt_string=$(
+    sed -E '
+              s!\\\[!\\001!g;
+                  ## replace all opening non-printing-character escapes ('\[')
+              s!\\\]!\\002!g;
+                  ## replace all closing non-printing-character escapes ('\]')
+              s!\\e!\\033!g;
+                  ## replace all ANSI escape characters ('\e')
+
+              s!\\c(([[:digit:]]+)|{([[:digit:];]+)})!\\033[\2\3m!g;
+                  ## reformat user color-codes into ANSI valid escapes
+            # s!\\t<([[:digit:]]+)>!$(tput \1)!eg;
+                  ## reformat user tput-codes into tput commands
+              s!(\\033\[[[:digit:];]+m)!\\001\1\\002!g
+                  ## wrap all ANSI color-escapes in non-printing-character escapes
+           ' <<< "$gprompt_string"
+  )
+
+
+  # ## this chunk condenses all parallel ANSI color-escapes and redundant non-printing-character escapes
+  # #
+  # while [[ $( grep -E '\\033\[([[:digit:];]+)m\\033\[([[:digit:];]+)m' <<< "$gprompt_string" ) ]]
+  # do
+  #   gprompt_string="$( sed -E 's!\\033\[([[:digit:];]+)m\\033\[([[:digit:];]+)m!\\033[\1;\2m!g' <<< "$gprompt_string" )"
+  # done
+
+  # while [[ $( grep -vE '\\001\\001\\033\[([[:digit:];]+)m\\002\\002' <<< "$gprompt_string" ) ]]
+  # do
+  #   gprompt_string="$( sed -E 's!\\001\\001(\\033\[[[:digit:];]+m)\\002\\002!\\001\1\\002!g' <<< "$gprompt_string" )"
+  # done
+
+  # while [[ $( grep -E '\\001\\033\[([[:digit:];]+)m\\002\\001\\033\[([[:digit:];]+)m\\002' <<< "$gprompt_string" ) ]]
+  # do
+  #   gprompt_string="$( sed -E 's!\\001\\033\[([[:digit:];]+)m\\002\\001\\033\[([[:digit:];]+)m\\002!\\001\\003[\1;\2m\\002!g' <<< "$gprompt_string" )"
+  # done
+
+  echo "$gprompt_string"
 }
 
 ## Outputs the a populated git-prompt based on the contents of GPROMPT_FORMAT (see the `gprompt_set_format` function description for more information)
 #
 gprompt_populate_prompt() {
   gprompt_git_status
-  
-  gprompt_string="$( sed -e "s|%p|$repo_path|g" <<< "$(gprompt_parse_format)" )"
+
+  gprompt_string=$(gprompt_parse_format)
 
   if [[ -n $repo_name ]]
   then
     # if in a git-repo, populate all format-strings
-    sed -e "
-            s|%r|$repo_name|g;
-            s|%d|$lead_path|g;
-            s|%p|$repo_path|g;
-            s|%b|$branch_name|g;
-            s|%+|$ahead_count|g;
-            s|%~|$behind_count|g;
-            s|%s|$staged_count|g;
-            s|%u|$unstag_count|g;
+    sed -E "
+            ## DIRECTORY INFO
+            s/%(d(ir(ectory)?)?|{d(ir(ectory)?)?})/%directory/g;    s|%directory|$local_path|g;
+            s/%(p(arent)?|{p(arent)?})/%parent/g;                   s|%parent|$parent_path|g;
+            s/%((full)?path|{(full)?path})/%path/g;                 s|%path|$full_path|g;
+
+            ## REPO INFO
+            s/%(r(epo)?|{r(epo)?})/%repo/g;                s|%repo|$repo_name|g;
+            s/%(b(ranch)?|{b(ranch)?})/%branch/g;          s|%branch|$branch_name|g;
+            s/%(c(om(mit)?)?|{c(om(mit)?)?})/%commit/g;    s|%commit|$commit_hash|g;
+
+            ## BRANCH STATE
+            s/%(\+|{ahead})/$ahead_count/g;
+            s/%(\-|{behind})/$behind_count/g;
+            s/%(\~|{parent})/$commit_parent/g;
+            s/%(\^|{merged})/$commit_merged/g;
+
+            ## FILE STATUS MODES
+            s/%(s(taged)?|{s(taged)?})/$staged_count/g;
+            s/%(u(nstaged)?|{u(nstaged)?})/$unstag_count/g;
+
+            ## FILE STATUS COUNTS
+            s/%(mod(ified)?|{mod(ified)?})/$mod_count/g;
+            s/%(add(ed)?|{add(ed)?})/$add_count/g;
+            s/%(del(eted)?|{del(eted)?})/$del_count/g;
+            s/%(rem(oved)?|{rem(oved)?})/$rem_count/g;
+            s/%(cop(y|ied)?|{cop(y|ied)?})/$cop_count/g;
+            s/%(re(named)?|{re(named)?})/$re_count/g;
+            s/%(up(dated)?|{up(dated)?})/$up_count/g;
+            s/%(un(merged)?|{un(merged)?})/$un_count/g;
+            s/%([?]|{untracked})/$untracked_count/g;
+            s/%([!]|{ignored})/$ignored_count/g;
 
            " <<< "$gprompt_string"
   else
-    # if not a git-repo, strip all formatting characters
-    sed -e "s|%[[:alnum:]~+]||g" <<< "$gprompt_string"
+    # if not a git-repo, strip all formatting characters except for  %d
+    sed -E "
+            s/%(d(ir(ectory)?)?|{d(ir(ectory)?)?})/%directory/g;    s|%directory|$local_path|g;
+
+            s/%([[:alnum:]]+|[?!~^+-]|{[[:alnum:]]+})//g;
+
+           " <<< "$gprompt_string"
   fi
 }
 
@@ -293,7 +493,6 @@ gprompt_cleanup_prompt() {
 gprompt_generate() {
   gprompt_string=`gprompt_cleanup_prompt "$( gprompt_populate_prompt )"`
 
-
   # this chunk formates the gprompt wrapper variables, which are used to pad the gprompt string
   #     for more info, see the   gprompt_set_wrapper()   description
   gprompt_wrapper_length=${#GPROMPT_WRAPPER}
@@ -306,7 +505,6 @@ gprompt_generate() {
     gprompt_wrapper_left="${GPROMPT_WRAPPER}"
     gprompt_wrapper_right="${GPROMPT_WRAPPER}"
   fi
-
 
   printf "${gprompt_wrapper_left}${gprompt_string}${gprompt_wrapper_right}"
 }
