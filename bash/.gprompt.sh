@@ -1,58 +1,109 @@
 #!/bin/sh
 
+gprompt_version='2019.04.22 (v4)'
+gprompt_commit=''
+
 
 
 ## ---------------- ##
 ##   gprompt main
 ## ---------------- ##
 
+gprompt() {
+  while (( "$#" ))
+  do
+    case "$1" in
+      -v|--version)
+        echo "gprompt version $gprompt_version ($gprompt_commit)"
+        return 0
+        ;;
+      init)
+        gprompt_init
+        shift
+        return 0
+        ;;
+      reset)
+        gprompt_reset
+        shift
+        return 0
+        ;;
+      reload)
+        gprompt_reload
+        shift
+        return 0
+        ;;
+      off)
+        gprompt_reload
+        shift
+        return 0
+        ;;
+      --set-format|--format)
+        if grep -m 1 -e '^--?' <<< "$2"
+        then
+          echo "    Option '$1' requires an argument."
+        else
+          gprompt_set_format "$2"
+          shift 2
+        fi
+        ;;
+      --set-format=*|--format=*)
+        opt=$( sed -nE "s/^--(set-)?format=(.*)/\2/p" <<< $1 )
+        [[ -n $opt ]] && gprompt_set_format "$opt" || echo "    Option '$1' requires an argument."
+        shift
+        ;;
+      --set-wrapper|--wrapper)
+        if grep -m 1 -e '^--?' <<< "$2"
+        then
+          echo "   
 
-# while test $# -gt 0; do
-#   case "$1" in
-#     -h|--help)
-#       echo "$package - attempt to capture frames"
-#       echo " "
-#       echo "$package [options] application [arguments]"
-#       echo " "
-#       echo "options:"
-#       echo "-h, --help                show brief help"
-#       echo "-a, --action=ACTION       specify an action to use"
-#       echo "-o, --output-dir=DIR      specify a directory to store output in"
-#       exit 0
-#       ;;
-#     -a)
-#       shift
-#       if test $# -gt 0; then
-#               export PROCESS=$1
-#       else
-#               echo "no process specified"
-#               exit 1
-#       fi
-#       shift
-#       ;;
-#     --action*)
-#       export PROCESS=`echo $1 | sed -e 's/^[^=]*=//g'`
-#       shift
-#       ;;
-#     -o)
-#       shift
-#       if test $# -gt 0; then
-#               export OUTPUT=$1
-#       else
-#               echo "no output dir specified"
-#               exit 1
-#       fi
-#       shift
-#       ;;
-#     --output-dir*)
-#       export OUTPUT=`echo $1 | sed -e 's/^[^=]*=//g'`
-#       shift
-#       ;;
-#     *)
-#       exit 1
-#       ;;
-#   esac
-# done
+           Option '$1' requires an argument."
+        else
+          gprompt_set_wrapper "$2"
+          shift 2
+        fi
+        ;;
+      --set-wrapper=*|--wrapper=*)
+        opt=$( sed -nE "s/^--(set-)?wrapper=(.*)/\2/p" <<< $1 )
+        [[ -n $opt ]] && gprompt_set_wrapper "$opt" || echo "    Option '$1' requires an argument."
+        shift
+        ;;
+      --save)
+        gprompt_save
+        ;;
+      -h|--help|*)
+        echo << EOHELP
+GPROMPT — customizable git status in your command prompt!
+    version $gprompt_version
+
+usage: gprompt [--version] [--help] [-C <path>] 
+EOHELP
+        return 1
+        ;;
+    esac
+  done
+
+  while getopts "f:w:s" opt
+  do
+    case $opt in
+      f)
+        gprompt_set_format "$OPTARG"
+        ;;
+      w)
+        gprompt_set_wrapper "$OPTARG"
+        ;;
+      s)
+        gprompt_save
+        ;;
+      :)
+        echo "    Option '-$OPTARG' requires an argument."
+        return 1
+        ;;
+    esac
+  done
+}
+
+export -f gprompt
+
 
 
 ## --------------------- ##
@@ -98,7 +149,7 @@ gprompt_reload() {
 ## Disables gprompt and sets your PS1 back to the value it had before GPROMPT was initialized
 #
 gprompt_off() {
-  export PS1=${GPROMPT_OFF}
+  export PS1="$GPROMPT_OFF"
 }
 
 
@@ -109,7 +160,7 @@ gprompt_off() {
 #       {%d%r}%p{ [%b%~%+{(%c)} <%s>(%u)]} $>
 #
 gprompt_set_format() {
-  export GPROMPT_FORMAT=$1
+  export GPROMPT_FORMAT="$1"
 }
 
 ## Short string used to pad your prompt, recommended default is ' ' (single blank space)
@@ -117,7 +168,7 @@ gprompt_set_format() {
 #     thus a wrapper '[]' yields '[<gprompt>]'
 #     while a wrapper '[(]' yields '[<gprompt>(]'
 gprompt_set_wrapper() {
-  export GPROMPT_WRAPPER=$1
+  export GPROMPT_WRAPPER="$1"
 }
 
 ## Overwrites the existing gprompt conf file with the currently exported gprompt definitions for your session.
@@ -241,4 +292,6 @@ gprompt_generate() {
 
   printf "${gprompt_wrapper_left}${gprompt_string}${gprompt_wrapper_right}"
 }
+
+
 
