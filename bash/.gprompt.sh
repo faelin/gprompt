@@ -14,7 +14,7 @@ gprompt() {
   do
     case "$1" in
       -v|--version)
-        echo "gprompt version $gprompt_version ($gprompt_commit)"
+        echo "gprompt version $gprompt_version $( [ $gprompt_commit ] && echo "($gprompt_commit)" )"
         return 0
         ;;
       init)
