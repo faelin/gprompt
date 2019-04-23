@@ -1,8 +1,6 @@
 #!/bin/sh
 
-gprompt_version='2019.04.22 (v4)'
-gprompt_commit=''
-
+gprompt_version='2019.04.23'
 
 
 ## ---------------- ##
@@ -33,39 +31,59 @@ gprompt() {
         return 0
         ;;
       off)
-        gprompt_reload
+        gprompt_off
         shift
         return 0
         ;;
+      --get-format)
+        echo "$GPROMPT_FORMAT"
+        return 0
+        ;;
+      --get-wrapper)
+        echo "$GPROMPT_WRAPPER"
+        return 0
+        ;;
       --set-format|--format)
-        if grep -m 1 -e '^--?' <<< "$2"
+        if grep -m 1 -ve '^--?|^$' <<< "$2"
         then
-          echo "    Option '$1' requires an argument."
-        else
           gprompt_set_format "$2"
           shift 2
+        else
+          echo "$GPROMPT_FORMAT"
+          return 0
+        fi
+        ;;
+      --set-wrapper|--wrapper)
+        if grep -m 1 -ve '^--?|$^' <<< "$2"
+        then
+          gprompt_set_wrapper "$2"
+          shift 2
+        else
+          echo "$GPROMPT_WRAPPER"
+          return 0
         fi
         ;;
       --set-format=*|--format=*)
         opt=$( sed -nE "s/^--(set-)?format=(.*)/\2/p" <<< $1 )
-        [[ -n $opt ]] && gprompt_set_format "$opt" || echo "    Option '$1' requires an argument."
-        shift
-        ;;
-      --set-wrapper|--wrapper)
-        if grep -m 1 -e '^--?' <<< "$2"
+        if [[ -n $opt ]]
         then
-          echo "   
-
-           Option '$1' requires an argument."
+          gprompt_set_format "$opt"
+          shift
         else
-          gprompt_set_wrapper "$2"
-          shift 2
+          echo "    Option '$1' requires an argument."
+          return 1
         fi
         ;;
       --set-wrapper=*|--wrapper=*)
         opt=$( sed -nE "s/^--(set-)?wrapper=(.*)/\2/p" <<< $1 )
-        [[ -n $opt ]] && gprompt_set_wrapper "$opt" || echo "    Option '$1' requires an argument."
-        shift
+        if [[ -n $opt ]]
+        then
+          gprompt_set_wrapper "$opt"
+          shift
+        else
+          echo "    Option '$1' requires an argument."
+          return 1
+        fi
         ;;
       --save)
         gprompt_save
