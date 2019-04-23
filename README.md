@@ -1,2 +1,2 @@
-# dotfiles
-Faelin's dotfiles, libraries, and configs
+# gprompt
+GPROMPT — customizable git status in your command prompt!
