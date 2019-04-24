@@ -1,7 +1,19 @@
 #!/bin/sh
 
 gprompt_version='2019.04.23.1'
+gprompt_source="$(dirname $BASH_SOURCE)"
+gprompt_exports=(
+                  GPROMPT_FORMAT
+                  GPROMPT_WRAPPER
+                  GPROMPT_PATHTYPE
+                  GPROMPT_UPDATE_AUTO
+                  GPROMPT_UPDATE_INTERVAL
+                )
 
+gprompt_updater_loop &> /dev/null &
+gprompt_updater_loop_id=$!
+#clear
+#echo $gprompt_updater_loop_id
 
 ## ---------------- ##
 ##   gprompt main
@@ -12,7 +24,7 @@ gprompt() {
   do
     case "$1" in
       -v|--version)
-        echo "gprompt version $gprompt_version $( [ $gprompt_commit ] && echo "($gprompt_commit)" )"
+        echo "gprompt - version $gprompt_version $( [ $gprompt_commit ] && echo "($gprompt_commit)" )"
         shift
         return 0
         ;;
@@ -85,7 +97,7 @@ gprompt() {
         fi
         ;;
       --set-format=*|--format=*)
-        opt=$( sed -nE "s/^--(set-)?format=(.*)/\2/p" <<< $1 )
+        local opt=$( sed -nE "s/^--(set-)?format=(.*)/\2/p" <<< $1 )
         if [[ -n $opt ]]
         then
           gprompt_set_format "$opt"
@@ -97,7 +109,7 @@ gprompt() {
         fi
         ;;
       --set-wrapper=*|--wrapper=*)
-        opt=$( sed -nE "s/^--(set-)?wrapper=(.*)/\2/p" <<< $1 )
+        local opt=$( sed -nE "s/^--(set-)?wrapper=(.*)/\2/p" <<< $1 )
         if [[ -n $opt ]]
         then
           gprompt_set_wrapper "$opt"
@@ -109,7 +121,7 @@ gprompt() {
         fi
         ;;
       --set-pathtype=*|--pathtype=*)
-        opt=$( sed -nE "s/^--(set-)?pathtype=(.*)/\2/p" <<< $1 )
+        local opt=$( sed -nE "s/^--(set-)?pathtype=(.*)/\2/p" <<< $1 )
         if [[ -n $opt ]]
         then
           gprompt_set_pathtype "$opt"
@@ -170,8 +182,30 @@ EOHELP
 #
 gprompt_init() {
   export GPROMPT_OFF=${PS1}
-  gprompt_reload || return 1
-  export PS1='$( gprompt_generate )'
+  if gprompt_reload
+  then
+    export PS1='$( gprompt_generate )'
+  else
+    echo "gprompt - failed to load from .gprompt_conf!"
+    return 1
+  fi
+}
+
+## Reads the currently stored gprompt definitions from the gprompt conf file
+#      • if the conf file cannot be found, gprompt will reset the existing gprompt defintions and store them to disk
+#      • only the first instance of each definition will be used
+#
+gprompt_reload() {
+  if [[ -f ~/.gprompt/.gprompt_conf ]] && [[ `wc -l ~/.gprompt/.gprompt_conf | xargs | cut -d' ' -f1` -gt 0 ]]
+  then
+    for xvar in "${gprompt_exports[@]}"
+    do
+      local gprompt_xvar_load="$(tail -r ~/.gprompt/.gprompt_conf | grep -m 1 -E "^$xvar='[^']*'$" )"
+      [[ -n $gprompt_xvar_load ]] && eval "export $gprompt_xvar_load" || return 1
+    done
+  else
+    gprompt_reset
+  fi
 }
 
 ## Resets the gprompt format back to the default values
@@ -181,24 +215,9 @@ gprompt_reset() {
   export GPROMPT_FORMAT='{\c{1;93}[\c22{%r}:\c1{%b}{\c91-{%-}}{\c92+{%+}}{ {\c96<{%s}>}{\c95({%u})}}\c93]\c0}%d $>'
   export GPROMPT_WRAPPER=' '
   export GPROMPT_PATHTYPE='abs'
-  gprompt_save
-}
-
-## Reads the currently stored gprompt definitions from the gprompt conf file
-#      • if the conf file cannot be found, gprompt will reset the existing gprompt defintions and store them to disk
-#      • only the first instance of each definition will be used
-#
-gprompt_reload() {
-  mkdir ~/.gprompt 2> /dev/null
-
-  if [ -f ~/.gprompt/.gprompt_conf ]
-  then
-    gprompt_format_loaded="$(grep -m 1 -E "^GPROMPT_FORMAT='[^']*'$" ~/.gprompt/.gprompt_conf)" && eval "export $gprompt_format_loaded" || return 1
-    gprompt_wrapper_loaded="$(grep -m 1 -E "^GPROMPT_WRAPPER='[^']*'$" ~/.gprompt/.gprompt_conf)" && eval "export $gprompt_wrapper_loaded" || return 1
-    gprompt_pathtype_loaded="$(grep -m 1 -E "^GPROMPT_PATHTYPE='[^']*'$" ~/.gprompt/.gprompt_conf)" && eval "export $gprompt_pathtype_loaded" || return 1
-  else
-    gprompt_reset
-  fi
+  export GPROMPT_UPDATE_AUTO=0
+  export GPROMPT_UPDATE_INTERVAL=600
+  gprompt_save 1> /dev/null
 }
 
 ## Disables gprompt and sets your PS1 back to the value it had before GPROMPT was initialized
@@ -285,12 +304,56 @@ gprompt_set_pathtype() {
 ## Overwrites the existing gprompt conf file with the currently exported gprompt definitions for your session.
 #
 gprompt_save() {
-  (
-    echo "GPROMPT_FORMAT='$GPROMPT_FORMAT'" ;
-    echo "GPROMPT_WRAPPER='$GPROMPT_WRAPPER'" ;
-    echo "GPROMPT_PATHTYPE='$GPROMPT_PATHTYPE'" ;
-  ) > ~/.gprompt/.gprompt_conf
-  return
+  mkdir ~/.gprompt 2> /dev/null
+  touch ~/.gprompt/.gprompt_conf
+
+  echo "gpropmpt - saving current config"
+
+  for xvar in "${gprompt_exports[@]}"
+  do
+    local gprompt_xvar_save="$xvar='$( eval echo "\${$xvar}" )'"
+    echo "    $gprompt_xvar_save"
+
+    sed -i -e "/^$xvar=/d" ~/.gprompt/.gprompt_conf
+    echo "$gprompt_xvar_save" >> ~/.gprompt/.gprompt_conf
+  done
+}
+
+
+
+## ----------------------------- ##
+##   gprompt private functions
+## ----------------------------- ##
+
+## runs in the background, exports a flag when an update is needed
+#
+__gprompt_updater_loop() {
+  while true
+  do
+    export GPROMPT_UPDATE_NEEDED="$( __gprompt_updater_check )"
+    sleep $GPROMPT_UPDATE_INTERVAL
+  done
+}
+
+## checks if an update is available
+#
+__gprompt_updater_check() {
+  echo 0
+}
+
+## determines what to do when an update is ready (ask/auto/suppress)
+#
+__gprompt_updater_mode() {
+  echo 0
+}
+
+## updates gprompt to the latest 'stable' tag
+#
+__gprompt_updater() {
+  local pwd="$(pwd)"
+  cd $gprompt_source
+  git pull https://github.com/faelin/gprompt.git stable
+  cd $pwd
 }
 
 
@@ -327,8 +390,8 @@ gprompt_git_status() {
     ##   '# branch.head <branch> | (detached)'      Current branch.
     ##   '# branch.upstream <upstream_branch>'      If upstream is set.
     ##   '# branch.ab +<ahead> -<behind>'           If upstream is set and the commit is present.
-    commit_hash=$(  sed -nE 's!^# branch.oid \(?([[:alnum:]]{7}|initial)\)?.*$!\1!p' <<< "$repo_status"  )
-    branch_name=$(  sed -nE 's!^# branch.head \(?(.*)\)?$!\1!p' <<< "$repo_status"  )
+    commit_hash=$(  sed -nE 's!^# branch.oid (\((initial)\)|([[:alnum:]]{7})).*$!\2\3!p' <<< "$repo_status"  )
+    branch_name=$(  sed -nE 's!^# branch.head (\((detached)\)|(.*))$!\2\3!p' <<< "$repo_status"  )
     origin_name=$(  sed -nE 's!^# branch.upstream (.*)$!\1!p' <<< "$repo_status"  )
     ahead_count=$(  sed -nE 's!^# branch.ab \+([[:digit:]]+) -([[:digit:]]+)$!\1!p' <<< "$repo_status" | sed -nE 's/[[:blank:]]*0*([1-9][0-9]*)/\1/p'  )
     behind_count=$( sed -nE 's!^# branch.ab \+([[:digit:]]+) -([[:digit:]]+)$!\2!p' <<< "$repo_status" | sed -nE 's/[[:blank:]]*0*([1-9][0-9]*)/\1/p' )
@@ -363,7 +426,7 @@ gprompt_git_status() {
 #     exclamation points ('!') in  sed  substitutions are purely to increase legibility amonst a lot of backslashes
 #
 gprompt_parse_format() {
-  gprompt_string="$GPROMPT_FORMAT"
+  local gprompt_string="$GPROMPT_FORMAT"
 
   ## merge all parallel color format markers
   while [[ $( grep -E '\\c(([[:digit:]]+)|{([[:digit:];]+)})\\c(([[:digit:]]+)|{([[:digit:];]+)})' <<< "$gprompt_string" ) ]]
@@ -416,7 +479,7 @@ gprompt_parse_format() {
 gprompt_populate_prompt() {
   gprompt_git_status
 
-  gprompt_string=$(gprompt_parse_format)
+  local gprompt_string=$(gprompt_parse_format)
 
   if [[ -n $repo_name ]]
   then
@@ -470,7 +533,7 @@ gprompt_populate_prompt() {
 #     blank/useless is defined as any value that DOES NOT contain non-formatting alphanumeric characters
 #
 gprompt_cleanup_prompt() {
-  gprompt_string=$1
+  local gprompt_string=$1
 
   ## strip all blank/useless curly-brace wrapped content, recursively from the inside out
   while [[ $( grep -m 1 -E '(^|[^\\]){((\\001\\033\[[[:digit:];]+m\\002|%[[:alpha:]~+]|[^{}[:alnum:]]*)+|[[:blank:]]+)}' <<< "$gprompt_string" ) ]]
@@ -491,12 +554,15 @@ gprompt_cleanup_prompt() {
 #     intended usage is   export PS1='$( gprompt_generate )'   or equivalent
 #
 gprompt_generate() {
-  gprompt_string=`gprompt_cleanup_prompt "$( gprompt_populate_prompt )"`
+  local gprompt_string=`gprompt_cleanup_prompt "$( gprompt_populate_prompt )"`
 
   # this chunk formates the gprompt wrapper variables, which are used to pad the gprompt string
   #     for more info, see the   gprompt_set_wrapper()   description
-  gprompt_wrapper_length=${#GPROMPT_WRAPPER}
-  gprompt_wrapper_midpoint=$(($gprompt_wrapper_length/2))
+  local gprompt_wrapper_length=${#GPROMPT_WRAPPER}
+  local gprompt_wrapper_midpoint=$(($gprompt_wrapper_length/2))
+  local gprompt_wrapper_left
+  local gprompt_wrapper_right
+
   if [ $gprompt_wrapper_midpoint -gt 0 ]
   then
     gprompt_wrapper_left=$( echo "${GPROMPT_WRAPPER:0:$gprompt_wrapper_midpoint}" )
