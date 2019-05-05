@@ -10,26 +10,80 @@ my $uses_text = <<EO_USES;
 gprompt  [help [command]]  [load [name]] [off]  [reset [--hard]] 
 [save [-f] [name]]  [update [--list] [--available] [version|commit]]  [version] 
 [-diopRrv] [-a boolean]  [-b [num] ['all']]  [-C path] [-f format]  [-h [topic]] 
-[-I num]  [-l name]  [-p [xvar]]  [-U <ask|background|never|supress>]  [-u num] 
-[--get-<def>]  [--set-<def>=value]  [--<def>[=value]]  [<def> [-l|-s] [value]] 
+[-I num]  [-l name]  [-U <ask|background|never|supress>]  [-u [num]] [-v format] 
+[--<def>[=value]]  [<def> [-l|-s] [value]]
 EO_USES
 
-my $para_text = <<EO_PARA;
- ... more to come ...
-EO_PARA
-
 my $help_text = <<EO_HELP;
+    -a boolean, --autosave[=boolean]
+        Automatically save your settings whenever they are updated.
+    
+    -b count, --backup[=count]
+        Maintain copies of your previous gprompt settings when saving.
+    
+    -C path, --config[=path]
+        Path to the config file you want gprompt to use.
+    
+    -d, disable
+        Permanently disables gprompt until manually enabled.    
+    
+    -f format, --format[=format]
+        Format string used to generate your command prompt.
+        
+    -G, generate
+        Prints out a rendered prompt as determined by your current format settings.
+    
+    -h [topic], help [topic]
+        Provides helpful information about gprompt.
+    
+    -i, init
+        Used to initiate gprompt before using it for the first time.
+    
+    -I num, --refresh[=num]
+        Frequency with which gprompt checks the status of your git repo.
+        
+    -l [setting], load [setting]
+        Loads your saved gprompt settings in the current shell.
+    
+    -o, off
+        Temporarily disable gprompt in the current shell.
+    
+    --pathtype[=type]
+        Determines whether rendered paths are relative or absolute.
+        
+    -p, print
+        Prints out the currently loaded configuration in a (somewhat) readable format.
+    
+    -r, reload
+        Resets the gprompt environment to default values.
+    
+    -R, reset
+        Completely resets the gprompt config file to default values.
+    
+    -s [name], save [name]
+        Stores your current settings in the gprompt config file.
+    
+    -u [num], --update[=num], update
+        Frequency with which gprompt checks for available updates. If no num is provided, updates the gprompt source files to the latest stable build.
+    
+    -U mode, --updater mode
+        Determines whether gprompt will ask you before updating.
+    
+    -v format, --vanilla[=format]
+        Non-formatted prompt that will be used when gprompt is turned off.
+    
+    version, --version
+        Shows the current gprompt version.
+
 See `gprompt help` for the full documentation of gprompt, or
 
 See `gprompt help <command>` for a detailed description of the command.
 EO_HELP
 
-my $syno_text = "$uses_text\n$para_text\n$help_text";
-
 my $conf_text = <<EO_CONF;
 The gprompt configuration file location defaults to:
 
-    ~/.gprompt/.gprompt_conf
+    ~/.gprompt/default.conf
     
 To instruct gprompt to look in another location for a configuration file,
 add the following line to the top of your existing gprompt config:
@@ -310,7 +364,7 @@ Running this command will cause your command prompt to be set to the 'vanilla'
 config value, which is typically defined when you run gprompt the first time.
 EO_OFF
 $coms_sect{reload} = <<EO_RELOAD;
-# RESET  -  Resets the gprompt config file to default values.
+# RELOAD  -  Resets the gprompt environment to default values.
 
 usage: gprompt reload
 
@@ -324,12 +378,12 @@ command to set up automatic backups:
     gprompt --set-backup all
 EO_RELOAD
 $coms_sect{reset} = <<EO_RESET;
-# RESET  -  Resets the gprompt config file to default values.
+# RESET  -  Completely resets the gprompt config file to default values.
 
 usage: gprompt reset
 
 Resets the entire gprompt configuration file (indicated by your current
-'config' setting) will be overwritten with a clean "default" configuration.
+'config' setting) by overwriting it with a clean "default" configuration.
 
 Use at your own risk!
 EO_RESET
@@ -364,7 +418,7 @@ EO_SAVE
 $coms_sect{update} = <<EO_UPDATE;
 # UPDATE  -  Updates the gprompt source files to the latest stable build.
 
-usage: gprompt update [--list] [--available] [version] [commit]
+usage: gprompt update [--list] [--available] [version|commit]
 
 The "update" command forces gprompt to immediately search for any available
 updates. The version ID of the newest update will be listed, along with a prompt

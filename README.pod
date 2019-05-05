@@ -1,93 +1,173 @@
 =pod
-=head1 Heading Text
-=head2 Heading Text
-=head3 Heading Text
-=head4 Heading Text
-=over indentlevel
-=item stuff
-=back
-=begin format
-=end format
-=for format text...
-=encoding type
- 
+
+=encoding utf8
+
 =head1 NAME
 
-gprompt -- customizable git status in your command prompt!
+gprompt — customizable git status in your command prompt!
 
 =head1 VERSION
 
-gprompt $gprompt_version
-
-=head1 USAGE
-
-C<<<
-gprompt  S<< [help [command]] >>  s<< [load [name]] >> s<< [off] >>  [reset [--hard]]  [save [-f] [name]]  [update [--list] [--available] [version|commit]]  [version]  [-diopRrv] [-a boolean]  [-b [num] ['all']]  [-C path] [-f format]  [-h [topic]]  [-I num]  [-l name]  [-p [xvar]]  [-U <ask|background|never|supress>]  [-u num]  [--get-<def>]  [--set-<def>=value]  [--<def>[=value]]  [<def> [-l|-s] [value]] 
->>>
+2019.04.27.1 (perl)
 
 =head1 SYNOPSIS
 
-See C<gprompt help> for the full documentation of gprompt, or
+    gprompt  [command]  [<setting> [-s] [-l] value]  [-dgIoPrR]  [-h [topic]]  [-l [section]]
+             [-s [name]]  [-U [version]]  [-a boolean]  [-b count]  [-c path]  [-f format]
+             [-i interval]  [-p type]  [-u mode]  [-v format]  [--<setting>[=value]]
 
-See C<gprompt help <command>> for a detailed description of the command.
+=head1 Description
+
+=over 8
+
+=item C<< -a boolean >>, C<< --autosave[=boolean] >>, C<< autosave [-s] [-l] [boolean] >>
+
+Automatically save your settings whenever they are updated.
+
+=item C<< -b count >>, C<< --backup[=count] >>, C<< backup [-s] [-l] [count] >>
+
+Maintain copies of your previous gprompt settings when saving.
+
+=item C<< -C path >>, C<< --config[=path] >>, C<< config [-s] [-l] [path] >>
+
+Path to the config file you want gprompt to use.
+
+=item C<< -d >>, C<< disable >>
+
+Permanently disables gprompt until manually enabled.    
+
+=item C<< -f format >>, C<< --format[=format] >>, C<< format [-s] [-l] [format] >>
+
+Format string used to generate your command prompt.
+        
+=item C<< -g >>, C<< generate >>
+
+Prints out a rendered prompt as determined by your current format settings.
+
+=item C<< -h [topic] >>, C<< help [topic] >>
+
+Provides the full documentation for gprompt, a description of a specific topic if one is provided.
+
+=item C<< -i interval >>, C<< --refresh[=interval] >>, C<< refresh [-s] [-l] [interval] >>
+
+Frequency with which gprompt checks the status of your git repo.
+
+=item C<< -I >>, C<< init >>
+
+Used to initiate gprompt before using it for the first time.
+
+=item C<< -l [name] >>, C<< load [-f] [setting-path] >>
+
+Loads your saved gprompt settings in the current shell.
+
+=item C<< -o >>, C<< off >>
+
+Temporarily disable gprompt in the current shell.
+
+=item C<< -p type >>, C<< --pathtype[=type] >>, C<< pathtype [-s] [-l] [type] >>
+
+Determines whether rendered paths are relative or absolute.
+
+=item C<< -P >>, C<< print >>
+
+Prints out the currently loaded configuration in a (somewhat) readable format.
+
+=item C<< -r >>, C<< reload >>
+
+Resets the gprompt environment to default values.
+
+=item C<< -R >>, C<< reset >>
+
+Completely resets the gprompt config file to default values.
+
+=item C<< -s [name] >>, C<< save -f [setting-path] >>
+
+Stores your current settings in the gprompt config file.
+
+=item C<< -u [mode] >>, C<< --updater[=mode] >>, C<< updater [-s] [-l] [mode] >>
+
+Determines whether gprompt will ask you before updating.
+
+=item C<< -U [version] >>, C<< update [--list] [version] >>
+
+Attempts to update the gprompt source files to the latest stable version. If a specific version is provided, gprompt will upgrade or downgrade to the appropriate version. The options C<--list> will print a list of all available versions.
+
+=item C<< -v format >>, C<< --vanilla[=format] >>, C<< vanilla [-s] [-l] [format] >>
+
+Non-formatted prompt that will be used when gprompt is turned off.
+
+=item C<< version >>
+
+Shows the current gprompt version.
+
+=back
 
 =head1 CONFIGURATION
 
 The gprompt configuration file location defaults to:
 
-    ~/.gprompt/.gprompt_conf
+    ~/.gprompt/default.conf
+
+To instruct gprompt to look in another location for a configuration file, simply define a 'config' value for the relevant configuration section:
+
+    ## example of a modified config path in the default-settings section
     
-To instruct gprompt to look in another location for a configuration file, add the following line to the top of your existing gprompt config:
+    DEFAULT:
+        - config: '/path/to/new/config'
+    
+This value will cause gprompt to load the indicated configuration file.
 
-    GPROMPT_CONF='</path/to/new/config>'
+Note that this redirection is recursive, meaning that gprompt will always check for a C<- config> value (and will redirect if one is found). The relevant configuration values found in the final configuration file will override any previously loaded values.
 
-This value will cause gprompt to load the indicated '*.gprompt_conf' file, or to look for a '.gprompt_conf' if the provided path is a directory.
-
-Note that this redirection is recursive, meaning that gprompt will always check for a 'GPROMPT_CONF' value (and will redirect if one is found) before attempting to load any further configuration values.
-
-NOTE: although it is recommended that a 'GPROMPT_CONF' redirection only be placed on the TOP line of the '.gprompt_conf' file, gprompt will redirect to the first 'GPROMPT_CONF' value that it finds, no matter when that value appears in the config.
-
-// PLEASE SEE THE 'CONFIGURATION OPTIONS' SECTION TO LEARN ABOUT THE AVAILABLE SETTINGS //
+B<< PLEASE SEE THE L</SETTINGS> SECTION TO LEARN ABOUT THE AVAILABLE CONFIGURATION SETTINGS >>
 
 =head1 SETTINGS
 
+=over 8
 
+=item autosave
 
+Automatically save your settings whenever they are updated.
 
-my %optn_sect;
-$optn_sect{autosave}=<<EO_AUTO;
-# AUTOSAVE  -  Automatically save your settings whenever they are updated.
-EO_AUTO
-$optn_sect{backup}=<<EO_BACK;
-# BACKUP  -  Maintain copies of your previous gprompt settings when saving.
-EO_BACK
-$optn_sect{config}=<<EO_CONF;
-# CONFIG  -   Path to the config file you want gprompt to use.
-EO_CONF
-$optn_sect{format}=<<EO_FORM;
-# FORMAT  -  Format string used to generate your command prompt.
-EO_FORM
-$optn_sect{pathtype}=<<EO_PATH;
-# PATHTYPE  -  Determines whether rendered paths are relative or absolute.
-EO_PATH
-$optn_sect{refresh}=<<EO_INTR;
-# REFRESH  -  Frequency with which gprompt checks the status of your git repo.
-EO_INTR
-$optn_sect{update}=<<EO_UPDT;
-# UPDATE  -  Frequency with which gprompt checks for available updates.
-EO_UPDT
-$optn_sect{updater}=<<EO_MODE;
-# UPDATER  -  Determines whether gprompt will ask you before updating. 
-EO_MODE
-$optn_sect{vanilla}=<<EO_VANL;
-# VANILLA  -  Non-formatted prompt that will be used when gprompt is turned off.
-EO_VANL
-my $optn_text = join( "\n", map { $optn_sect{$_} } sort keys %optn_sect );
+=item backup
 
+Maintain copies of your previous gprompt settings when saving.
+
+=item config
+
+Path to the config file you want gprompt to use.
+
+=item format
+
+Format string used to generate your command prompt.
+
+=item pathtype
+
+Determines whether rendered paths are relative or absolute.
+
+=item refresh
+
+Frequency with which gprompt checks the status of your git repo.
+
+=item update
+
+Frequency with which gprompt checks for available updates.
+
+=item updater
+
+Determines whether gprompt will ask you before updating. 
+
+=item vanilla
+
+Non-formatted prompt that will be used when gprompt is turned off.
+
+=back
 
 =head1 COMMANDS
 
-=head2 DISABLE
+=over 8
+
+=item disable
 
   usage: gprompt disable
 
@@ -103,7 +183,7 @@ To re-enable the gprompt utility, simply use the command:
 Once the gprompt utility is disabled, any gprompt command other than
 C<gprompt init> will immediately return a non-zero exit code.
 
-=head2 HELP
+=item help
 
   usage: gprompt help [command ...] [section ...]  [definition ...]
 
@@ -112,7 +192,7 @@ The 'help' command by itself will the gprompt documentation into your shell.
 If provided with any arguments, the printed output will only contain
 information about the specified commands, defintions, or help text sections.
 
-=head2 INIT
+=item init
 
   usage: gprompt init
 
@@ -122,7 +202,7 @@ first time, or to enable gprompt after using the C<gprompt disable> command.
 This command will create a default gprompt configuration file if one does not
 already exist under the path '~/.gprompt/.gprompt_conf'.
 
-=head2 LOAD
+=item load
 
   usage: gprompt load [--list] [name]
 
@@ -147,16 +227,16 @@ CAUTION: Failure to load successfully or failure to find a valid default
 configuration will cause gprompt to overwrite the entire configuration file
 (indicated by your current 'config-path') with a clean "default" configuration!
 
-=head2 OFF
+=item off
 
   usage: gprompt off
 
 Running this command will cause your command prompt to be set to the 'vanilla'
 config value, which is typically defined when you run gprompt the first time.
 
-=head2 RELOAD
+=item reload
 
-  usage: gprompt reload
+    usage: gprompt reload
 
 Resets the gprompt environment (in the current shell session) to the values
 described in your config file's 'DEFAULTS' section.
@@ -167,16 +247,16 @@ command to set up automatic backups:
 
     gprompt --set-backup all
 
-=head2 RESET
+=item reset
 
-  usage: gprompt reset
+    usage: gprompt reset
 
 Resets the entire gprompt configuration file (indicated by your current
-'config' setting) will be overwritten with a clean "default" configuration.
+'config' setting) by overwriting it with a clean "default" configuration.
 
 Use at your own risk!
 
-=head2 SAVE
+=item save
 
   usage: gprompt save [-f] [name]
 
@@ -203,9 +283,9 @@ section will be automatically appended with a pattern described in the autosave
 options help text, after which the settings for your current session will be
 written to disk.
 
-=head2 UPDATE
+=item update
 
-  usage: gprompt update [--list] [--available] [version] [commit]
+    usage: gprompt update [--list] [--available] [version] [commit]
 
 The "update" command forces gprompt to immediately search for any available
 updates. The version ID of the newest update will be listed, along with a prompt
@@ -220,12 +300,14 @@ that are newer than the version that is currently installed.
 The option '--list' will print out a list of every version released to date,
 ordered from newest to older.
 
-=head2 VERSION
+=item version
 
   usage: gprompt version
     
 Shows the current version of your active gprompt installation.
-    
+
+=back
+
 =head1 FORMATTING
 
 The format of your prompt will determine what appears in you shell prompt.
