@@ -4,7 +4,7 @@ use warnings;
 use strict;
 use feature qw/ say /;
 
-use Digest::MD5 qw/ md5_hex /;
+use Digest::file qw/ digest_file_hex /;
 use File::Basename;
 use File::Path qw/ mkpath /;
 use IO::File;
@@ -12,38 +12,141 @@ use Scalar::Util qw/ looks_like_number /;
 use Storable;
 
 
+## GPROMPT GLOBAL CONSTANTS
+our $SESSION   = getppid;
+our $PWD       = $ENV{PWD};
+our $HOME      = $ENV{HOME};
+
+our $LANG      = 'perl';
+our $TAGFIX    = "stable-${LANG}_";
+our $VERSION   = "2019.05.24.1";
+our $DATEFORM  = 'yyyy.mm.dd.';
+
+our $CURR_SUFF  = $VERSION;
+our $CURR_DATE = substr $CURR_SUFF => 0, length $DATEFORM, '';
+
+our $SOURCE    = fileparse(__FILE__);
+
+our $ROOT_DIR  = "$HOME/.gprompt";
+our $CACHE_DIR = "$ROOT_DIR/cache";
+eval { mkpath("$ROOT_DIR", 0, 0744) };
+eval { mkpath("$CACHE_DIR", 0, 0700) };
+die "Critical error - gprompt requires read/write access to your gprompt storage directory ('$ROOT_DIR')!" if $@;
+
+
 ## GPROMPT GLOBAL VARIABLES
 
-my $version = '2019.04.29.1 (perl)';
-my $source  = fileparse(__FILE__);
-my $session = getppid;
-my $root_dir  = "$ENV{HOME}/.gprompt";
-my $cache_dir = "$root_dir/cache";
-eval { mkpath("$cache_dir", 0, 0700) };
-die "Critical error - gprompt requires read/write access to your gprompt storage directory ('$root_dir')!" if $@;
 
 
+## cache contains the following key shortnames:
+#    conf_nm   (config name)
+#    conf_cs   (config file checksum)
+#    gprompt   (gprompt format string)
+#    up_time   (time of last update)
+#    re_time   (time of last refresh)
+#    disable   (gprompt on/off state)
+#
 my %cache = (
                  conf_nm => undef,
                  conf_cs => undef,
                  gprompt => undef,
+                 gformat => undef,
                  up_time => 0,
                  re_time => 0,
                  disable => 0,
              );
 
-my %settings = (
-                   autosave  =>  0,
-                   backup    =>  0,
-                   config    =>  "$root_dir/default.conf",
-                   disabled  =>  0,
-                   format    =>  '\h:\W \u\$ ',
-                   pathtype  =>  'abs',
-                   vanilla   =>  '\h:\W \u\$ ',
-                   fetch     =>  -1,
-                   updater   =>  'ask',
-               );
 
+my %settings = (
+                    autosave  =>  False,
+                    backup    =>  0,
+                    disabled  =>  0,
+                    fetch     =>  -1,
+                    format    =>  '\h:\W \u\$ ',
+                    relative  =>  0,
+                    refresh   =>  0,
+                    update    =>  600,
+                    updater   =>  'ask',
+                    vanilla   =>  '\h:\W \u\$ ',
+               );
+my $settings_match = ( join '|' => keys %settings  );
+
+
+my @settings_words = (
+                           'autosave',
+                           'backup',
+                           'fetch',
+                           'format',
+                           'relative',
+                           'refresh',
+                           'update',
+                           'updater',
+                           'vanilla',
+                      );
+my %settings_flags = (
+                           a  =>  'autosave',
+                           b  =>  'backup',
+                           i  =>  'fetch',
+                           f  =>  'format',
+                           P  =>  'relative',
+                           u  =>  'updater',
+                           v  =>  'vanilla',
+                      );
+my $settings_words = ( join '|' => @settings_words  );
+my $settings_flags = ( join ''  => keys %settings_flags  );
+
+my %commands_words = (
+                           generate  =>  \&generate,
+                           help      =>  \&help,
+                           init      =>  \&init,
+                           load      =>  \&load,
+                           on        =>  \&on_off,
+                           off       =>  \&on_off,
+                           print     =>  \&print,
+                           reload    =>  \&reload,
+                           reset     =>  \&reset,
+                           save      =>  \&save,
+                           update    =>  \&update,
+                           version   =>  \&version,
+                      );
+my %commands_flags = (
+                           g  =>  \&generate,
+                           h  =>  \&help,
+                           I  =>  \&init,
+                           l  =>  \&load,
+                           o  =>  \&on_off,
+                           p  =>  \&print,
+                           r  =>  \&reload,
+                           R  =>  \&reset,
+                           s  =>  \&save,
+                           U  =>  \&update,
+                      );
+my $commands_words = ( join '|' => keys %commands_words  );
+my $commands_flags = ( join ''  => keys %commands_flags  );
+
+
+# ##
+# # my @man_pattern=(
+# #                   NAME => [ $name_text ],
+# #                   VERSION => [ $vers_text ],
+# #                   SYNOPSIS => [ $uses_text, $help_text ],
+# #                   CONFIGURATION => [ $conf_text ],
+# #                   COMMANDS => [
+# #                                    $coms_text{init},
+# #                                    $coms_text{off},
+# #                                    $coms_text{reset},
+# #                                    $coms_text{load},
+# #                                    $coms_text{save},
+# #                                    $coms_text{update},
+# #                                    $coms_text{version},
+# #                                ],
+# #                   OPTIONS => [ $optn_text ],
+# #                   EXIT => [ $exit_text ],
+# #                   EXAMPLES => [ $exam_text ],
+# #               );
+# #
+# #
+# #
 
 
 my %man_sects = (
@@ -57,59 +160,19 @@ my %man_sects = (
                     'EXIT CODES'     =>  8,
                     'EXAMPLES'       =>  9,
                 );
+my $help_msg = "Try 'gprompt help' to learn what you can do with gprompt!";
 
 
-my %settings_words = (
-                           autosave  =>  \&__autosave,
-                           backup    =>  \&__backup,
-                           config    =>  \&__config,
-                           format    =>  \&__format,
-                           pathtype  =>  \&__pathtype,
-                           fetch     =>  \&__fetch,
-                           updater   =>  \&__updater,
-                           vanilla   =>  \&__vanilla,
-                      );
-my %settings_flags = (
-                           a  =>  \&__autosave,
-                           b  =>  \&__backup,
-                           c  =>  \&__config,
-                           f  =>  \&__format,
-                           i  =>  \&__fetch,
-                           u  =>  \&__updater,
-                           v  =>  \&__vanilla,
-                      );
-my $settings_words = ( join '|' => keys %settings_words  );
-my $settings_flags = ( join ''  => keys %settings_flags  );
+## ---------------- ##
+##   gprompt main
+## ---------------- ##
 
-my %commands_words = (
-                           disable   =>  \&disable,
-                           generate  =>  \&generate,
-                           help      =>  \&help,
-                           init      =>  \&init,
-                           load      =>  \&load,
-                           off       =>  \&off,
-                           print     =>  \&print,
-                           reload    =>  \&reload,
-                           reset     =>  \&reset,
-                           save      =>  \&save,
-                           update    =>  \&update,
-                           version   =>  \&version,
-                      );
-my %commands_flags = (
-                           d  =>  \&disable,
-                           g  =>  \&generate,
-                           h  =>  \&help,
-                           I  =>  \&init,
-                           l  =>  \&load,
-                           o  =>  \&off,
-                           p  =>  \&print,
-                           r  =>  \&reload,
-                           R  =>  \&reset,
-                           s  =>  \&save,
-                           U  =>  \&update,
-                      );
-my $commands_words = ( join '|' => keys %commands_words  );
-my $commands_flags = ( join ''  => keys %commands_flags  );
+
+# `updater_loop &> /dev/null`
+# `updater_loop_id=$!`
+
+gprompt( @ARGV );
+    
 
 my $version_patt = qr/  \d{4}\.\d{2}(\.\d{2})+  ( \(\w+\) )?  /;
 my $setting_patt = qr/  @  [^\s:]+  (:[^\s:]+)*  /x;
@@ -124,29 +187,11 @@ my $command_patt = qr/^(?:
                            |   -  (?<com_flag> [$commands_flags]+ )
                         )$/x;
 
-my $error_msg = "Try 'gprompt help' to learn what you can do with gprompt!";
-
-
-## ---------------- ##
-##   gprompt main
-## ---------------- ##
-
-
-# `updater_loop &> /dev/null`
-# `updater_loop_id=$!`
-
-gprompt( @ARGV );
-    
-
 ## argument-parser
 #
-sub gprompt(@) {
+sub gprompt (@) {
     my @args = @_;
     my (%actions, $errors);
-    
-    if ( scalar @args == 1 ) {
-        
-    }
 
     ## iterate over all args
     for (my $i = 0; $i < scalar @args; $i++) {
@@ -177,6 +222,7 @@ sub gprompt(@) {
                     $commands_words{ $+{com_word} }->();
                 }
                 
+                
             } elsif ( $flag ) {
                 
                 if ( $flag eq 's' or $flag eq 'l' ) {
@@ -194,6 +240,7 @@ sub gprompt(@) {
                     $commands_flags{ $+{com_flag} }->();
                 }
                 
+                
             } else {
                 ( $j, $word, $flag, $optn, $value )  =  ( $i, $+{set_word}, $+{set_flag}, $+{set_optn}, $+{value} );
                 
@@ -204,16 +251,16 @@ sub gprompt(@) {
                 }
                 
                 if ( $word and $args[$i+1] ) {
-                    $settings_flags{ $word }->( @args[ ++$i .. $j ] );
+                    __get_set_config( $word, @args[ ++$i .. $j ] );
                     $i = $j;
                 } elsif ( $flag )  {
-                    $settings_flags{ $flag }->( $args[ ++$i ] );
+                    __get_set_config( $settings_flags{ $flag }, $args[ ++$i ] );
                 } elsif ( $value ) {
-                    $settings_words{ $optn }->( $value );
+                    __get_set_config( $optn, $value );
                 } elsif ( $optn ) {
-                    $settings_words{ $optn }->();
+                    __get_set_config( $optn );
                 } elsif ( $word ) {
-                    $settings_flags{ $word }->();
+                    __get_set_config( $word );
                 }
             }
             
@@ -222,7 +269,7 @@ sub gprompt(@) {
             
             ## print error message for any gprompt argument that seems invalid.
             $errors++;
-            warn "\nUnrecognized argument '$args[$i]'.\n";
+            say "\nUnrecognized argument '$args[$i]'.\n";
         }
     }
     
@@ -236,9 +283,15 @@ sub gprompt(@) {
 ## --------------------- ##
 
 
+##
+#
+sub generate () {
+    
+}
+
 ## Generates a formatted help-text
 #
-sub help {
+sub help (@) {
     my @args = @_;
       
     # return say __wrap_text( \%man_sects ) unless scalar @args;
@@ -251,78 +304,141 @@ sub help {
     # }
 }
 
-
-sub init {
+## Prepares a new session to use gprompt
+#    1. clears the session-cache namespace
+#    2. loads the named config (uses the default config if no name is provided)
+#
+sub init (;$) {
     my $name = shift;
-    my %sessions;
+    $name = $name || 'default';
     
-    __clear_session_caches();
+    &__clear_session_caches();
     
-    ## load the named configuration-file (&load will default is $name is undef)
-    load('-f', $name);
+    ## load the named configuration-file
+    &load('-f', $name);
 }
-
 
 ## Reads the currently stored gprompt definitions from the gprompt conf file
 #      • if the conf file cannot be found, gprompt will reset the existing gprompt definitions and store them to disk
 #      • only the first instance of each definition will be used
 #
-sub load {
-    my ($flag, $name) = shift;    
-               $name  = $flag and $flag = undef  unless  $flag eq '-f';
-        
-    my %loaded = __load_by_id( $name, $flag );
-    $settings{$_} = $loaded{$_} for keys %loaded;
+sub load (;$$) {
+    my ($option, $target) = @_;
+       ($target, $option) = ($option, $target)  unless  $option eq '-f';  # swap $option and $name unless $option is valid
+    
+    $target = 'default' unless defined $target;
+    
+    my ($name, $conf, $sect) = split /@|:/ => $target;
+    
+    $name = ($name || $conf);
+    
+    my %loaded = &__load_by_name( $name, $option );
+    
+    if ( $sect ) {
+        $settings{$sect} = $loaded{$sect};
+    } else {
+        $settings{$_} = $loaded{$_} for keys %loaded;
+    }
 
     ## store the newly loaded configuration in a session cache
+    &__save_cache();
+}
+
+## Activates/deactivates the named config file
+#    • if no name is provided, then only the current session will be modified
+#    • when deactivated, `gprompt generate` will print the 'vanilla' prompt
+#
+sub on_off (;$) {
+  $cache{disable} = !$cache{disable};
+  &__save_cache();
+}
+
+## Prints a formatted list of the current gprompt configuration settings
+#
+sub print (;$) {
+    print for __format_print();
+}
+
+## Resets the current gprompt configuration settings back to the default configuration
+#
+sub reload () {
+    load '-f' => 'default'
+}
+
+## Resets the gprompt 'default' configuration settings back to the hard-coded default values
+#      clears all currently unused caches
+#
+sub reset () {
+  &__prune_caches();
+    
+  $settings{autosave}  =  0;
+  $settings{backup}    =  0;
+  $settings{disabled}  =  0;
+  $settings{format}    =  '{\c{1;93}[\c22{%r}:\c1{%b}{\c91-{%-}}{\c92+{%+}}{ {\c96<{%s}>}{\c95({%u})}}\c93]\c0}%d $>';
+  $settings{relative}  =  0;
+  $settings{vanilla}   =  '\h:\W \u\$ ';
+  $settings{fetch}     =  -1;
+  $settings{updater}   =  'ask';
+
+  &save('default');
+}
+
+## Stores the current gprompt config into a save file
+#    prompts user for overwrite-permission if a config file with the given $name already exists.
+#
+sub save ($;$) {
+    my ($flag, $name) = @_;
+       ($name, $flag) = ($flag, $name)  unless  $flag eq '-f';  # swap $flag and $name unless $flag is valid
+
+    # confirm overwrite if targetted save-file already exists
+    if ( $flag ne '-f'  and  -f "$root_dir/$name.conf" ) {
+        print "There is already a saved config with the name '$name'. Do you want to overwrite it? [yN]: ";
+        until ( <> =~ /^((?<yes>[Yy](es)?)|(?<no>([Nn]o?)?))$/x) {
+            print "\tunrecognized response; do you want to overwrite the '$name' config file? [yN]: ";
+        }
+        return 0 if defined $+{no};
+        
+        if ( lc $name eq 'default' ) {
+            print "This will modify the gprompt default configuration file. Are you sure you want to continue? [yN]: ";
+            until ( <> =~ /^((?<yes>[Yy](es)?)|(?<no>([Nn]o?)?))$/x) {
+                print "\tunrecognized response; are you sure you want to overwrite the default configuration file? [yN]: ";
+            }
+            return 0 if defined $+{no};
+        }
+    }
+    
+    
+    # write save to file
+    open( my $conf_fh, '>' => "$root_dir/$name.conf" )
+        or say "Error - could not save to configuration file '$root_dir/$name.conf': $!";
+    
+    print $conf_fh for __format_print();
+
+    close $conf_fh;
+    
+    
+    # store current save-state in cache
+    $cache{conf_cs} = __generate_checksum($name);
+    $cache{conf_nm} = $name;
     __save_cache();
 }
 
-## Resets the gprompt format back to the default values
-#      NOTE: This will overwrite your custom prompt formatting!
-#            Please back up your   ~/.gprompt/default.conf   before attempting a reset!
+## Immediately attempts to update the gprompt source-files
 #
-sub reset {
-  __clear_caches();
+sub update (;$) {
+    my $request  = shift;
+    my @versions = __list_versions();
     
-  $settings{autosave}  =  0,
-  $settings{backup}    =  0,
-  $settings{config}    =  "$root_dir/default.conf",
-  $settings{disabled}  =  0,
-  $settings{format}    =  '{\c{1;93}[\c22{%r}:\c1{%b}{\c91-{%-}}{\c92+{%+}}{ {\c96<{%s}>}{\c95({%u})}}\c93]\c0}%d $>';
-  $settings{pathtype}  = 'abs';
-  $settings{vanilla}   =  '\h:\W \u\$ ',
-  $settings{fetch}     =  -1,
-  $settings{updater}   =  'ask',
-
-  return save( 'DEFAULT' );
+    my $tag = __updater_check();
+    #   git -C $source pull https://github.com/faelin/gprompt.git stable
+    
+    die "Failed to update! No such version '$vers'." if $!;
 }
 
-## Disables gprompt and sets your PS1 back to the value it had before GPROMPT was initialized
+## Prints the gprompt version string
 #
-sub off {
-  $cache{disable} = 1;
-  
-  return __save_cache();
-}
-
-## Overwrites the existing gprompt conf file with the currently exported gprompt definitions for your session.
-#
-sub save {
-    my ($flag, $name) = shift;
-               $name  = $flag and $flag = undef  unless  $flag eq '-f';
-
-    unless ( $flag ) {
-        print "There is already a save with the name '$name'. Do you want to overwrite it? [yN]: ";
-        until ( <> =~ /^((?<yes>[Yy](es)?)|(?<no>([Nn]o?)?))$/x) {
-            print "\tunrecognized respons; do you want to overwrite save '$name'? [yN]: ";
-        }
-        return if $+{no};
-    }
-
-    __save_cache( $name or 'DEFAULT' );
-    
-    ## SAVE CONFIG
+sub version () {
+    say "gprompt release " . VERSION;
 }
 
 
@@ -331,152 +447,192 @@ sub save {
 ##   gprompt private functions
 ## ----------------------------- ##
 
-my $cache_sort = sub {
-                          my ( $a_name, undef, $a_suff ) = fileparse $a => qr/\.\d+$/;
-                          my ( $b_name, undef, $b_suff ) = fileparse $b => qr/\.\d+$/;
-                          
-                          $a_suff = 0 unless $a_suff;
-                          $b_suff = 0 unless $b_suff;
-                          
-                          my $cmp_sessions = looks_like_number $a_name and looks_like_number $b_name;
-                          
-                          my $name_cmp = $cmp_sessions ? $a_name <=> $b_name : $a_name cmp $b_name;
-                          
-                          return $name_cmp or $a_suff <=> $b_suff;
-                      };
 
-sub __list_caches {
-    my $id = shift;
-       $id = '*' unless defined $id;
+sub __format_print () {
+    my @lines;
     
-    return sort $cache_sort glob "$cache_dir/$id $cache_dir/$id.*";
-}
-
-sub __load_cache {
-    my $id = shift;
-       $id = $session unless defined $id;
+    for my $key ( keys %settings ) {
+        my $param = $settings{$key};
+        
+        push @lines => sprintf( "%-10s %s\n" => "$key:", ($param =~ /^ -?\d+ $/x ? $param : "'$param'") );
+    }
     
-    ## get the highest-numbered (e.g. the most recent) cache for the current session
-    ##     (session = ppid of script process);
-    my $session_cache = [ __list_caches($id) ]->[-1];
-    
-    ## load the relevant session-cache;
-    %cache = %{ retrieve(  $session_cache  ) };
+    return @lines;
 }
 
 
-sub __save_cache {
-    my $id = shift;
-       $id = $session unless defined $id;
+sub __generate_checksum (;$) {
+    my $name = shift || 'default';
     
-    ## get the highest-numbered (e.g. the most recent) cache for the current session
-    ##     (session = ppid of script process);
-    my $session_cache = [ __list_caches($id) ]->[-1];
+    return digest_file_hex( "$root_dir/$name.conf" => 'SHA-1');
+}
+
+## Sorts cache-files by name and then by suffix, numerically
+#
+sub cache_sort {
+                      my ( $a_name, undef, $a_suff ) = fileparse( $a => qr/\d+$/ );
+                      my ( $b_name, undef, $b_suff ) = fileparse( $b => qr/\d+$/ );
+                            # for fileparse, suffix-pattern MUST NOT include the '.', or suffixes will be compared as decimals (i.e. '.10 <=> .1' )
+                      
+                      my $session_cmp = $a_name <=> $b_name;
+                      
+                      return ($session_cmp or $a_suff <=> $b_suff);
+                };
+
+## Loads the latest cache for the specified session (defaults to current session)
+#    loads config from the default config-file if no cache can be found
+#
+sub __load_cache (;$) {
+    my $id = shift || $session;
+    my @cache_list;
     
-    ## increment the session-cache suffix by one and store the current session-cache under the new suffix
-    my ($name, undef, $suffix) = fileparse $session_cache => qr/\.\d+$/;
+    ## list of all caches for the current session id
+    ##     (session = ppid of script process)
+    @cache_list = sort cache_sort glob "$cache_dir/$id.*";
+    
+    load() unless scalar @cache_list;
+    
+    ## load the highest-numbered (e.g. the most recent) cache for the current session
+    %cache = %{ retrieve(  $cache_list[-1]  ) };
+    
+    load() if $cache{conf_cs} ne __generate_checksum( $cache{conf_nm} );
+}
+
+## Clears existing cache files for the specified session before saving a new cache file (defaults to current session)
+#
+sub __save_cache (;$) {
+    my $id = shift || $session;
+    my (@cache_list, $name, $suffix);
+       
+    ## remove all non-locked caches for the current session before trying to save the new cache
+    &__clear_session_caches();
+    
+    ## list of all caches for the current session id
+    ##     (session = ppid of script process)
+    @cache_list = sort cache_sort glob "$cache_dir/$id.*";
+    
+    ## increment the suffix of the highest-numbered (e.g. the most recent) cache for the current session by one
+    ##    then store the current session-cache under the new suffix
+    ($name, undef, $suffix) = fileparse( $cache_list[-1] => qr/\d+$/ ) if scalar @cache_list;
     $suffix++;
     store \%cache => "$cache_dir/$name.$suffix";
 }
 
+## Remove any cache-file whose id or 'session number' (ppid of this process) is no longer in use
+#
+sub __clear_session_caches (;$) {
+    my $id = shift || $session;
+    
+    unlink for glob "$cache_dir/$id.*";
+}
 
-sub __clear_session_caches {
-    my $id = shift;
-       $id = '[0-9]*' unless defined $id;
+## Remove unused cache-files
+#
+sub __prune_caches () {
+    my ($cache, $name);
     
     ## remove any cache-file whose id or 'session number' (ppid of this process) is no longer in use
-    for ( glob "$cache_dir/$id $cache_dir/$id.*" ) {
-        my $name = fileparse $_ => qr/\.\d+$/;
+    for my $cache ( glob "$cache_dir/*.*" ) {
+        $name = fileparse( $cache => qr/\.\d+$/ );
         
-        unlink unless looks_like_number $name and kill 0, $name;
+        unlink $cache unless `ps -o command= -c` =~ /  bash  |  (c|k|tc|z)? sh  /x;
     }
 }
 
-
-sub __clear_caches {
-    my $id = shift;
-       $id = '*' unless defined $id;
-       
-    unlink glob "$cache_dir/$id $cache_dir/$id.*";
+## Verify that the provided $val is a valid argument for the config option $key
+#    sets $val to undef if value doesn't reflect accepted values for the current $key
+#
+sub __accept_parameters ($$) {
+    my ($key, $val) = @_;
+    
+    if ( $key eq 'autosave' ) {
+        $val = 1 if lc $val eq 'true';
+        $val = 0 if lc $val eq 'false';
+        $val = undef unless $val =~ /^ ( 0 | 1 ) $/x;
+    } elsif ( $key eq 'backup' ) {
+        $val = undef unless $val =~ /^ -?\d+ $/x;
+    } elsif ( $key eq 'disabled' ) {
+        $val = 1 if lc $val eq 'true';
+        $val = 0 if lc $val eq 'false';
+        $val = undef unless $val =~ /^ ( 0 | 1 ) $/x;
+    } elsif ( $key eq 'fetch' ) {
+        $val = undef unless $val =~ /^ \d+ $/x;
+    } elsif ( $key eq 'format' ) {
+        $val = undef unless $val;
+    } elsif ( $key eq 'relative' ) {
+        $val = 1 if lc $val =~ /^ rel(ative)? $/x;
+        $val = 0 if lc $val =~ /^ abs(olute)? $/x;
+        $val = undef unless $val =~ /^ ( 0 | 1 ) $/x;
+    } elsif ( $key eq 'refresh' ) {
+        $val = undef unless $val =~ /^ \d+ $/x;
+    } elsif ( $key eq 'update' ) {
+        $val = undef unless $val =~ /^ \d+ $/x;
+    } elsif ( $key eq 'updater' ) {
+        $val =  1 if lc $val =~ /^ auto(matic)? $/x;
+        $val =  0 if lc $val =~ /^ ( ask | default ) $/x;
+        $val = -1 if lc $val =~ /^ ( supress | ignore | never ) $/x;
+        $val = undef unless $val =~ /^ ( -1 | 0 | 1 ) $/x;
+    } elsif ( $key eq 'vanilla' ) {
+        $val = undef unless $val;
+    } else {
+        return 'error';
+    }
+    
+    return $val;
 }
 
-
-sub __load_by_id {
-    my ($optn, $name, $sect) = split /@|:/ => shift;
-    my (%conf, %paths);
-    my $flag = shift;
+## Loads the config file indicated by the provided $name (loads the default config if no name is provided)
+#
+sub __load_by_name (@) {
+    my ($name, $option) = @_;    
+    $name = (lc $name or 'default');
     
-    $name = 'DEFAULT' unless $name;
-    
-    open( my $conf_fh, '<' => glob $settings{config} )
-        or say "Error - could not load configuration file '$settings{config}': $!" and &reset();
+    open( my $conf_fh, '<' => "$root_dir/$name.conf" )
+        or say "Error - could not load configuration file '$root_dir/$name.conf': $!" and &reset();
 
-    my $slurp = 0;
     for (<$conf_fh>) {
-        if ( /^\h*([^:]+):/  and  $1 eq uc $name ) {
-            $slurp = 1;
-        } elsif ($slurp  and  /^  \h+  -  \h+  (?<set>[^:]+)  :  \h+  (?<val>.*)  $/x) {
-            $conf{$+{set}} = $+{val};
-        } else {
-            last if $slurp;
-        }
+        next if /^ \s* #/x;
+        
+        my ($key, $val) = /^ (\w+): \h+ (.*) $/x;
+     
+        $key = lc $key;
+        $val = &__accept_parameters( $key => $val );
+        
+        say "Error - invalid configuration option '$key' at '$name.conf' line ${.}."
+            and next
+            if $val eq 'error';
+            
+        say "Error - configuration option '$key' requires a valid argument at '$name.conf' line ${.}."
+            and next
+            unless defined $val;
+        
+        $settings{$key} = $val;
     }
     close $conf_fh;
-        
-        
-        
-        
-        
-        
-        
-    #   if ( -f "$root_dir/default.conf" and `wc -l ~/.gprompt/default.conf | xargs | cut -d' ' -f1` > 0 ) {
-    #     foreach $setting (@settings) {
-    #       local setting_load="$(tail -r ~/.gprompt/default.conf | grep -m 1 -E "^$setting='[^']*'$" )"
-    #       [[ -n $setting_load ]] && eval "export $setting_load" || return 1
-    #     }
-    #   } else {
-        
-    #   }
-    
-    # die "GPROMPT - could not load configuration file '$settings{config}': $!";
 }
 
-
-## Sets the gprompt format
+## Sets the indicated gprompt config definition
 #
-sub __format {
-    my @args = @_;
+sub __get_set_config ($@) {
+    my ($key, $opt, $val) = @_;
+       ($val, $opt) = ($opt, $val)  unless  $opt eq '-s';  # swap $flag and $name unless $flag is valid
     
-    return say "\t-> gprompt format set to '$settings{format}'" unless scalar @args;
+    return say "gprompt $key is currently set to '$settings{$key}'"  unless  $val;
+     
+    $key = lc $key;
+    $val = &__accept_parameters( $key => $val );
+
+    ## set $val to undef if value doesn't reflect accepted values for the current $key
+    say "Warning - '$val' does not interact with git. $help_msg\n"  if  $key eq 'format' and $val !~ / (?<!\\) ( { | %[\w!?^~+-] ) /x;
+
+    return say "Error - invalid argument for configuration option '$key'. $help_msg"  unless  $val;
     
-    $settings{format} = $format;
-    say "GPROMPT - format set to '$WRAPPER'";
-    say "GPROMPT - NOTE: '$format' does not interact with git. $error_msg\n" unless ($format =~ /{.*}|%[\w!?^~+-]/)
+    $settings{$key} = $val;
+    &save( $cache{conf_nm} ) if $opt eq '-s';
 }
 
 
-# ##
-# # my @man_pattern=(
-# #                   NAME => [ $name_text ],
-# #                   VERSION => [ $vers_text ],
-# #                   SYNOPSIS => [ $uses_text, $help_text ],
-# #                   CONFIGURATION => [ $conf_text ],
-# #                   COMMANDS => [
-# #                                    $coms_text{init},
-# #                                    $coms_text{off},
-# #                                    $coms_text{reset},
-# #                                    $coms_text{load},
-# #                                    $coms_text{save},
-# #                                    $coms_text{update},
-# #                                    $coms_text{version},
-# #                                ],
-# #                   OPTIONS => [ $optn_text ],
-# #                   EXIT => [ $exit_text ],
-# #                   EXAMPLES => [ $exam_text ],
-# #               );
-# #
-# #
-# #
+
 # sub __wrap_text {
 #     my ( $input ) = shift;
 #     my $cols  = `tput cols`;
@@ -523,36 +679,52 @@ sub __format {
 #     return $wrapped; 
 # }
 
-# ## runs in the background, exports a flag when an update is needed
-# #
-# sub __updater_loop {
-#   while true
-#   do
-#     export UPDATE_NEEDED="$( __updater_check )"
-#     sleep $UPDATER_INTERVAL
-#   done
-# }
 
-# ## checks if an update is available
-# #
-# sub __updater_check {
-#   echo 0
-# }
 
-# ## determines what to do when an update is ready (ask/auto/suppress)
-# #
-# sub __updater_mode {
-#   echo 0
-# }
+## runs in the background, exports a flag when an update is needed
+#
+sub __updater_loop () {
+}
 
-# ## updates gprompt to the latest 'stable' tag
-# #
-# sub __updater {
-#   local pwd="$(pwd)"
-#   cd $source
-#   git pull https://github.com/faelin/gprompt.git stable
-#   cd $pwd
-# }
+
+## lists the existing releases of gprompt
+#
+sub __list_versions () {
+    my @versions = split /\n/ => `git tag -l "stable-perl_*"`;
+    
+    return sort {
+                    my $a_suff = substr( $a => length $TAGFIX );
+                    my $b_suff = substr( $b => length $TAGFIX );
+                    
+                    my $a_date = substr( $a_suff => 0, length $DATEFORM, '' );
+                    my $b_date = substr( $b_suff => 0, length $DATEFORM, '' );
+                    
+                    return ($b_date cmp $a_date or $b_suff <=> $a_suff);
+                } @versions;
+}
+
+
+## lists the available updates (updates found after the current local version)
+#
+sub __updater_check () {
+    my @versions;
+
+    for my $check ( __list_versions() ) {
+        my $check_suff = substr $check => length $TAGFIX;
+        my $check_date = substr $check_suff => 0, length $DATEFORM, '';
+        
+        push @verions => $check if ($CURR_DATE < $check_date or $CURR_SUFF < $check_suff)
+    }
+    
+    return @versions;
+}
+
+
+
+## determines what to do when an update is ready (ask/auto/suppress)
+#
+sub __updater_mode {
+}
 
 
 
@@ -560,63 +732,74 @@ sub __format {
 ##   gprompt core functions
 ## -------------------------- ##
 
+
 ## Updates gprompt, does not provide output
 #     returns 0 before git-status variables would be updated, if CWD is not a git repo
 #
 sub git_status {
+    
+    my $full_path  =  $settings{relative} ? $PWD =~ s!^ $HOME (?= $ | /)!~/!rx : $PWD;
+    
+    my @repo_status  =  split /\n/ => `git status --branch --untracked-files --ignored --porcelain=2 2>/dev/null`;
+    
+    if ( scalar @repo_status ) {
+        
+        ## name of repo origin
+        my $repo_name  =  fileparse `git rev-parse --show-toplevel 2>/dev/null`;
+        my ($parent_path, $local_path)  =  $full_path =~ m|^ (.*) /$repo_name (/.*)? $|x;
 
-  ## full_path gives the CWD in relative or absolute form depending on the state of $PATHTYPE
-  full_path  =  [[ $PATHTYPE == 'rel' ]] && pwd -L | sed -E "s|^(/Users|/home)?/`whoami`(/.+)?|~\2|" || pwd -L
-  repo_name  =  basename -s .git $( git config --get remote.origin.url ) 2> /dev/null
-
-  if [[ -n $repo_name ]]
-  then
-    repo_status  =  git status --branch --ignored --porcelain=2
-    repo_parent  =  git show -s --format='%P' HEAD
-    parent_path  =  sed -nE "s|^(.*)/$repo_name/.*?$|\1|p" <<< "$full_path"
-    local_path   =  sed -nE "s|^.*/$repo_name(/.*)?$|\1|p" <<< "$full_path"
-
-    ## looks like:
-    ##   '<parent1 SHA> <parent2 SHA>'
-    commit_parent  =  sed -nE 's!^([[:alnum:]]{7}).*$!\1!p' <<< "$repo_parent"
-    commit_merged  =  sed -nE 's!^([[:alnum:]]{7})[[:alnum:]]+ ([[:alnum:]]{7}).*$!\2!p' <<< "$repo_parent"
-
-
-    ## looks like:
-    ##   '# branch.oid <commit> | (initial)'        Current commit.
-    ##   '# branch.head <branch> | (detached)'      Current branch.
-    ##   '# branch.upstream <upstream_branch>'      If upstream is set.
-    ##   '# branch.ab +<ahead> -<behind>'           If upstream is set and the commit is present.
-    commit_hash   =  sed -nE 's!^# branch.oid (\((initial)\)|([[:alnum:]]{7})).*$!\2\3!p' <<< "$repo_status"
-    branch_name   =  sed -nE 's!^# branch.head (\((detached)\)|(.*))$!\2\3!p' <<< "$repo_status"
-    origin_name   =  sed -nE 's!^# branch.upstream (.*)$!\1!p' <<< "$repo_status"
-    ahead_count   =  sed -nE 's!^# branch.ab \+([[:digit:]]+) -([[:digit:]]+)$!\1!p' <<< "$repo_status"
-    behind_count  =  sed -nE 's!^# branch.ab \+([[:digit:]]+) -([[:digit:]]+)$!\2!p' <<< "$repo_status"
-    staged_count  =  grep -cE '^[[:alnum:]]+ [^[:blank:].][^[:blank:]]' <<< "$repo_status" | wc -l | xargs
-    unstag_count  =  grep -cE '^[[:alnum:]]+ [^[:blank:]][^[:blank:].]' <<< "$repo_status" | wc -l | xargs
+        ## looks like:
+        ##   '<parent1 short-SHA> <parent2 short-SHA>'
+        my $repo_parent    =  `git show -s --format='%p' HEAD`;
+        my ($commit_parent, $commit_merged)  =  $repo_parent =~ m!^(\w+) \s* (\w*)$!x;
 
 
-    ## reference:
-    ##   M = modified
-    ##   A = added
-    ##   D = deleted
-    ##   C = copied
-    ##   R = renamed
-    ##   U = updated but unmerged
-    ##   ! = ignored
-    ##   ? = untracked
-    mod_count        =  grep -cE '^.M' <<< "$repo_status" | wc -l | xargs
-    add_count        =  grep -cE '^.A' <<< "$repo_status" | wc -l | xargs
-    del_count        =  grep -cE '^.D' <<< "$repo_status" | wc -l | xargs
-    cop_count        =  grep -cE '^.C' <<< "$repo_status" | wc -l | xargs
-    re_count         =  grep -cE '^.D' <<< "$repo_status" | wc -l | xargs
-    up_count         =  grep -cE '^.U' <<< "$repo_status" | wc -l | xargs
-    ignored_count    =  grep -ce '^!!' <<< "$repo_status" | wc -l | xargs
-    untracked_count  =  grep -ce '^??' <<< "$repo_status" | wc -l | xargs
+        my %fields = (
+                          ab       => '',
+                          oid      => '',
+                          head     => '',
+                          upstream => '',
+                      );
+        
+        for my $item ( @repo_status ) {
+                
+            ## branch-status header looks like:
+            ##   '# branch.oid <commit> | (initial)'        Current commit.
+            ##   '# branch.head <branch> | (detached)'      Current branch.
+            ##   '# branch.upstream <upstream_branch>'      If upstream is set.
+            ##   '# branch.ab +<ahead> -<behind>'           If upstream is set and the commit is present.
+            $fields{ $1 } = $2 and next  if  $item =~ /^#  branch\.(\w++)  \h++  (.++)/x
+            $fields{ staged   }++  if  $item =~ /^[12u] \h++ [^.]/x
+            $fields{ unstaged }++  if  $item =~ /^[12u] \h++ .[^.]/x
+            $fields{ staged }++  if  $item =~ /^1 \h++ [^.]/x
+        }
+        
+        
+        my $staged_count  =  grep -cE '^[[:alnum:]]+ [^[:blank:].][^[:blank:]]' <<< "$repo_status" | wc -l | xargs
+        $unstag_count  =  grep -cE '^[[:alnum:]]+ [^[:blank:]][^[:blank:].]' <<< "$repo_status" | wc -l | xargs
 
-  else
-    local_path="$full_path"
-  fi
+
+        ## reference:
+        ##   M = modified
+        ##   A = added
+        ##   D = deleted
+        ##   C = copied
+        ##   R = renamed
+        ##   U = updated but unmerged
+        ##   ! = ignored
+        ##   ? = untracked
+        mod_count        =  grep -cE '^.M' <<< "$repo_status" | wc -l | xargs
+        add_count        =  grep -cE '^.A' <<< "$repo_status" | wc -l | xargs
+        del_count        =  grep -cE '^.D' <<< "$repo_status" | wc -l | xargs
+        cop_count        =  grep -cE '^.C' <<< "$repo_status" | wc -l | xargs
+        re_count         =  grep -cE '^.D' <<< "$repo_status" | wc -l | xargs
+        up_count         =  grep -cE '^.U' <<< "$repo_status" | wc -l | xargs
+        ignored_count    =  grep -ce '^!!' <<< "$repo_status" | wc -l | xargs
+        untracked_count  =  grep -ce '^??' <<< "$repo_status" | wc -l | xargs
+
+    } else {
+        $local_path = "$full_path"
+    }
 }
 
 ## Replaces gprompt-specific escapes with printf-parsible ANSI color escape wrapped in PS1-parsible non-printing-characters brackets
@@ -628,7 +811,7 @@ sub parse_format {
   ## merge all parallel color format markers
   while [[ $( grep -E '\\c(([[:digit:]]+)|{([[:digit:];]+)})\\c(([[:digit:]]+)|{([[:digit:];]+)})' <<< "$string" ) ]]
   do
-    string="$( sed -E 's!\\c(([[:digit:]]+)|{([[:digit:];]+)})\\c(([[:digit:]]+)|{([[:digit:];]+)})!\\c{\2\3;\5\6}!g' <<< "$string" )"
+    string="$( $string =~ s!\\c(([[:digit:]]+)|{([[:digit:];]+)})\\c(([[:digit:]]+)|{([[:digit:];]+)})!\\c{\2\3;\5\6}!g )"
   done
 
 
@@ -657,17 +840,17 @@ sub parse_format {
   # #
   # while [[ $( grep -E '\\033\[([[:digit:];]+)m\\033\[([[:digit:];]+)m' <<< "$string" ) ]]
   # do
-  #   string="$( sed -E 's!\\033\[([[:digit:];]+)m\\033\[([[:digit:];]+)m!\\033[\1;\2m!g' <<< "$string" )"
+  #   string="$( $string =~ s!\\033\[([[:digit:];]+)m\\033\[([[:digit:];]+)m!\\033[\1;\2m!g )"
   # done
 
   # while [[ $( grep -vE '\\001\\001\\033\[([[:digit:];]+)m\\002\\002' <<< "$string" ) ]]
   # do
-  #   string="$( sed -E 's!\\001\\001(\\033\[[[:digit:];]+m)\\002\\002!\\001\1\\002!g' <<< "$string" )"
+  #   string="$( $string =~ s!\\001\\001(\\033\[[[:digit:];]+m)\\002\\002!\\001\1\\002!g )"
   # done
 
   # while [[ $( grep -E '\\001\\033\[([[:digit:];]+)m\\002\\001\\033\[([[:digit:];]+)m\\002' <<< "$string" ) ]]
   # do
-  #   string="$( sed -E 's!\\001\\033\[([[:digit:];]+)m\\002\\001\\033\[([[:digit:];]+)m\\002!\\001\\003[\1;\2m\\002!g' <<< "$string" )"
+  #   string="$( $string =~ s!\\001\\033\[([[:digit:];]+)m\\002\\001\\033\[([[:digit:];]+)m\\002!\\001\\003[\1;\2m\\002!g )"
   # done
 
   echo "$string"
@@ -729,7 +912,7 @@ sub populate_prompt {
     ## strip all curly-brace wrapped content, recursively from the inside out
     while [[ $( grep -m 1 -E '(^|[^\\]){([^\\{}]+|\\[^{}]|\\[{}])*}' <<< "$string" ) ]]
     do
-      string="$( sed -E 's/(^|[^\\]){([^\\{}]+|\\[^{}]|\\[{}])*}/\1/g' <<< "$string"  )"
+      string="$( $string =~ s/(^|[^\\]){([^\\{}]+|\\[^{}]|\\[{}])*}/\1/g  )"
     done
   fi
 }
@@ -743,13 +926,13 @@ sub cleanup_prompt {
   ## strip all blank/useless curly-brace wrapped content, recursively from the inside out
   while [[ $( grep -m 1 -E '(^|[^\\]){((\\001\\033\[[[:digit:];]+m\\002|\\c([[:digit:]]+|{[[:digit:];]+})|%[[:alpha:]~+]|[^{}[:alnum:]]*)+|[[:blank:]]+)}' <<< "$string" ) ]]
   do
-    string="$( sed -E 's/(^|[^\\]){((\\001\\033\[[[:digit:];]+m\\002|\\c([[:digit:]]+|{[[:digit:];]+})|%[[:alpha:]~+]|[^{}[:alnum:]]*)+|[[:blank:]]+)}/\1/g' <<< "$string"  )"
+    string="$( $string =~ s/(^|[^\\]){((\\001\\033\[[[:digit:];]+m\\002|\\c([[:digit:]]+|{[[:digit:];]+})|%[[:alpha:]~+]|[^{}[:alnum:]]*)+|[[:blank:]]+)}/\1/g  )"
   done
 
   ## strip all non-escaped curly braces, from left to right
   while [[ $( grep -m 1 -E '(^|[^\\])[{}]' <<< "$string" ) ]]
   do
-    string="$( sed -E 's/(^|[^\\])[{}]/\1/g' <<< "$string"  )"
+    string="$( $string =~ s/(^|[^\\])[{}]/\1/g  )"
   done
 
   echo "$string"
