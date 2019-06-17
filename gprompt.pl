@@ -35,7 +35,36 @@ die "Critical error - gprompt requires read/write access to your gprompt storage
 
 
 ## GPROMPT GLOBAL VARIABLES
-
+our %git = (
+              path_full   => '',
+              path_root   => '',
+              path_local  => '',
+              
+              repo_name   => '',
+              parent_hash => '',
+              merged_hash => '',
+              
+              
+              origin    => '',
+              branch    => '',
+              commit    => '',
+              
+              ahead     => 0,
+              behind    => 0,
+              
+              ignored   => 0,
+              untracked => 0,
+              
+              staged    => 0,
+              unstaged  => 0,
+              
+              modified  => 0,
+              added     => 0,
+              deleted   => 0,
+              copied    => 0,
+              renamed   => 0,
+              updated   => 0,
+           );
 
 
 ## cache contains the following key shortnames:
@@ -50,6 +79,7 @@ my %cache = (
                  conf_nm => undef,
                  conf_cs => undef,
                  gprompt => undef,
+                 gfields => undef,
                  gformat => undef,
                  up_time => 0,
                  re_time => 0,
@@ -174,7 +204,7 @@ my $help_msg = "Try 'gprompt help' to learn what you can do with gprompt!";
 gprompt( @ARGV );
     
 
-my $version_patt = qr/  \d{4}\.\d{2}(\.\d{2})+  ( \(\w+\) )?  /;
+my $VERSION_patt = qr/  \d{4}\.\d{2}(\.\d{2})+  ( \(\w+\) )?  /;
 my $setting_patt = qr/  @  [^\s:]+  (:[^\s:]+)*  /x;
 my $command_patt = qr/^(?:
                                 ## configuration settings
@@ -208,7 +238,7 @@ sub gprompt (@) {
                     $j++  if  $args[$j+1]  and  $args[$j+1] eq '-f';
                     $j++  if  $args[$j+1]  and  $args[$j+1] =~ /^ $setting_patt $/x;
                 } elsif ( $word eq 'update' ) {
-                    $j++  if  $args[$j+1]  and  $args[$j+1] =~ /^(?:  --list  |  $version_patt  )$/x;
+                    $j++  if  $args[$j+1]  and  $args[$j+1] =~ /^(?:  --list  |  $VERSION_patt  )$/x;
                 } elsif ( $word eq 'help' ) {
                     $j++  if  $args[$j+1];
                 } elsif ( $word eq 'init' ) {
@@ -228,7 +258,7 @@ sub gprompt (@) {
                 if ( $flag eq 's' or $flag eq 'l' ) {
                     $j++  if  $args[$j+1]  and  $args[$j+1] =~ /^ $setting_patt $/x;
                 } elsif ( $flag eq 'u' ) {
-                    $j++  if  $args[$j+1]  and  $args[$j+1] =~ /^ $version_patt $/x;
+                    $j++  if  $args[$j+1]  and  $args[$j+1] =~ /^ $VERSION_patt $/x;
                 } elsif ( $flag eq 'h' ) {
                     $j++  if  $args[$j+1];
                 }
@@ -391,7 +421,7 @@ sub save ($;$) {
        ($name, $flag) = ($flag, $name)  unless  $flag eq '-f';  # swap $flag and $name unless $flag is valid
 
     # confirm overwrite if targetted save-file already exists
-    if ( $flag ne '-f'  and  -f "$root_dir/$name.conf" ) {
+    if ( $flag ne '-f'  and  -f "$ROOT_DIR/$name.conf" ) {
         print "There is already a saved config with the name '$name'. Do you want to overwrite it? [yN]: ";
         until ( <> =~ /^((?<yes>[Yy](es)?)|(?<no>([Nn]o?)?))$/x) {
             print "\tunrecognized response; do you want to overwrite the '$name' config file? [yN]: ";
@@ -409,8 +439,8 @@ sub save ($;$) {
     
     
     # write save to file
-    open( my $conf_fh, '>' => "$root_dir/$name.conf" )
-        or say "Error - could not save to configuration file '$root_dir/$name.conf': $!";
+    open( my $conf_fh, '>' => "$ROOT_DIR/$name.conf" )
+        or say "Error - could not save to configuration file '$ROOT_DIR/$name.conf': $!";
     
     print $conf_fh for __format_print();
 
@@ -427,18 +457,19 @@ sub save ($;$) {
 #
 sub update (;$) {
     my $request  = shift;
-    my @versions = __list_versions();
     
-    my $tag = __updater_check();
-    #   git -C $source pull https://github.com/faelin/gprompt.git stable
+    return say join "\n" => __list_versions()  if  $request eq '--list';
     
-    die "Failed to update! No such version '$vers'." if $!;
+    my $tag = $request  ||  [ __updater_check() ]->[0];
+    # `git -C $SOURCE pull https://github.com/faelin/gprompt.git stable-${LANG}_$request`
+    
+    die "Failed to update! No such version '$VERSION'." if $!;
 }
 
 ## Prints the gprompt version string
 #
 sub version () {
-    say "gprompt release " . VERSION;
+    say "gprompt release stable-${LANG}_$VERSION";
 }
 
 
@@ -464,7 +495,7 @@ sub __format_print () {
 sub __generate_checksum (;$) {
     my $name = shift || 'default';
     
-    return digest_file_hex( "$root_dir/$name.conf" => 'SHA-1');
+    return digest_file_hex( "$ROOT_DIR/$name.conf" => 'SHA-1');
 }
 
 ## Sorts cache-files by name and then by suffix, numerically
@@ -474,21 +505,21 @@ sub cache_sort {
                       my ( $b_name, undef, $b_suff ) = fileparse( $b => qr/\d+$/ );
                             # for fileparse, suffix-pattern MUST NOT include the '.', or suffixes will be compared as decimals (i.e. '.10 <=> .1' )
                       
-                      my $session_cmp = $a_name <=> $b_name;
+                      my $SESSION_cmp = $a_name <=> $b_name;
                       
-                      return ($session_cmp or $a_suff <=> $b_suff);
+                      return ($SESSION_cmp or $a_suff <=> $b_suff);
                 };
 
 ## Loads the latest cache for the specified session (defaults to current session)
 #    loads config from the default config-file if no cache can be found
 #
 sub __load_cache (;$) {
-    my $id = shift || $session;
+    my $id = shift || $SESSION;
     my @cache_list;
     
     ## list of all caches for the current session id
     ##     (session = ppid of script process)
-    @cache_list = sort cache_sort glob "$cache_dir/$id.*";
+    @cache_list = sort cache_sort glob "$CACHE_DIR/$id.*";
     
     load() unless scalar @cache_list;
     
@@ -501,7 +532,7 @@ sub __load_cache (;$) {
 ## Clears existing cache files for the specified session before saving a new cache file (defaults to current session)
 #
 sub __save_cache (;$) {
-    my $id = shift || $session;
+    my $id = shift || $SESSION;
     my (@cache_list, $name, $suffix);
        
     ## remove all non-locked caches for the current session before trying to save the new cache
@@ -509,21 +540,21 @@ sub __save_cache (;$) {
     
     ## list of all caches for the current session id
     ##     (session = ppid of script process)
-    @cache_list = sort cache_sort glob "$cache_dir/$id.*";
+    @cache_list = sort cache_sort glob "$CACHE_DIR/$id.*";
     
     ## increment the suffix of the highest-numbered (e.g. the most recent) cache for the current session by one
     ##    then store the current session-cache under the new suffix
     ($name, undef, $suffix) = fileparse( $cache_list[-1] => qr/\d+$/ ) if scalar @cache_list;
     $suffix++;
-    store \%cache => "$cache_dir/$name.$suffix";
+    store \%cache => "$CACHE_DIR/$name.$suffix";
 }
 
 ## Remove any cache-file whose id or 'session number' (ppid of this process) is no longer in use
 #
 sub __clear_session_caches (;$) {
-    my $id = shift || $session;
+    my $id = shift || $SESSION;
     
-    unlink for glob "$cache_dir/$id.*";
+    unlink for glob "$CACHE_DIR/$id.*";
 }
 
 ## Remove unused cache-files
@@ -532,7 +563,7 @@ sub __prune_caches () {
     my ($cache, $name);
     
     ## remove any cache-file whose id or 'session number' (ppid of this process) is no longer in use
-    for my $cache ( glob "$cache_dir/*.*" ) {
+    for my $cache ( glob "$CACHE_DIR/*.*" ) {
         $name = fileparse( $cache => qr/\.\d+$/ );
         
         unlink $cache unless `ps -o command= -c` =~ /  bash  |  (c|k|tc|z)? sh  /x;
@@ -587,8 +618,8 @@ sub __load_by_name (@) {
     my ($name, $option) = @_;    
     $name = (lc $name or 'default');
     
-    open( my $conf_fh, '<' => "$root_dir/$name.conf" )
-        or say "Error - could not load configuration file '$root_dir/$name.conf': $!" and &reset();
+    open( my $conf_fh, '<' => "$ROOT_DIR/$name.conf" )
+        or say "Error - could not load configuration file '$ROOT_DIR/$name.conf': $!" and &reset();
 
     for (<$conf_fh>) {
         next if /^ \s* #/x;
@@ -713,7 +744,7 @@ sub __updater_check () {
         my $check_suff = substr $check => length $TAGFIX;
         my $check_date = substr $check_suff => 0, length $DATEFORM, '';
         
-        push @verions => $check if ($CURR_DATE < $check_date or $CURR_SUFF < $check_suff)
+        push @versions => $check if ($CURR_DATE < $check_date or $CURR_SUFF < $check_suff)
     }
     
     return @versions;
@@ -723,7 +754,7 @@ sub __updater_check () {
 
 ## determines what to do when an update is ready (ask/auto/suppress)
 #
-sub __updater_mode {
+sub __updater_mode () {
 }
 
 
@@ -732,34 +763,35 @@ sub __updater_mode {
 ##   gprompt core functions
 ## -------------------------- ##
 
-
 ## Updates gprompt, does not provide output
 #     returns 0 before git-status variables would be updated, if CWD is not a git repo
 #
-sub git_status {
+sub __git_status () {
+    my @repo_status;
+
+    # path_full      repo_name       origin     ahead     staged     ignored      modified
+    # path_root      parent_hash     branch     behind    unstaged   untracked    added
+    # path_local     merged_hash     commit                                       deleted
+    #                                                                             copied
+    #                                                                             renamed
+    #     
     
-    my $full_path  =  $settings{relative} ? $PWD =~ s!^ $HOME (?= $ | /)!~/!rx : $PWD;
+    $git{path_full}  =  $settings{relative} ? $PWD =~ s!^ $HOME (?= $ | /)!~/!rx : $PWD;
     
-    my @repo_status  =  split /\n/ => `git status --branch --untracked-files --ignored --porcelain=2 2>/dev/null`;
+    my $time = time;
+    if ( $settings{refresh} and $time - $cache{re_time} > $settings{refresh} ) {
+        @repo_status  =  split /\n/ => `git status --branch --untracked-files --ignored --porcelain=2 2>/dev/null`;
+    }
     
     if ( scalar @repo_status ) {
         
         ## name of repo origin
-        my $repo_name  =  fileparse `git rev-parse --show-toplevel 2>/dev/null`;
-        my ($parent_path, $local_path)  =  $full_path =~ m|^ (.*) /$repo_name (/.*)? $|x;
+        $git{repo_name}  =  fileparse `git rev-parse --show-toplevel 2>/dev/null`;
+        @git{qw/path_root path_local/}  =  $git{path_full} =~ m|^ (.*) /$git{repo_name} (/.*)? $|x;
 
         ## looks like:
         ##   '<parent1 short-SHA> <parent2 short-SHA>'
-        my $repo_parent    =  `git show -s --format='%p' HEAD`;
-        my ($commit_parent, $commit_merged)  =  $repo_parent =~ m!^(\w+) \s* (\w*)$!x;
-
-
-        my %fields = (
-                          ab       => '',
-                          oid      => '',
-                          head     => '',
-                          upstream => '',
-                      );
+        @git{qw/parent_hash merged_hash/}  = (`git show -s --format='%p' HEAD 2>/dev/null` || "") =~ m!^(\w+) \s* (\w*)$!x;
         
         for my $item ( @repo_status ) {
                 
@@ -768,153 +800,172 @@ sub git_status {
             ##   '# branch.head <branch> | (detached)'      Current branch.
             ##   '# branch.upstream <upstream_branch>'      If upstream is set.
             ##   '# branch.ab +<ahead> -<behind>'           If upstream is set and the commit is present.
-            $fields{ $1 } = $2 and next  if  $item =~ /^#  branch\.(\w++)  \h++  (.++)/x
-            $fields{ staged   }++  if  $item =~ /^[12u] \h++ [^.]/x
-            $fields{ unstaged }++  if  $item =~ /^[12u] \h++ .[^.]/x
-            $fields{ staged }++  if  $item =~ /^1 \h++ [^.]/x
+            my $header_pattern = qr/    ^
+                                        \# \h+ branch\.  
+                                        (?:
+                                              (?<ab> ab )
+                                            | (?<comm> oid )
+                                            | (?<head> head )
+                                            | (?<orig> upstream )
+                                        )
+                                        \h++
+                                        (?:
+                                            (?(<ab>) \+(?<a> \d+) \h+ \-(?<b> \d+)
+                                                | (?(<comm>) (?<commit> [[:xdigit:]]{5,40})
+                                                    | (?(<head>) (?<branch> .+)
+                                                        | (?(<orig>) (?<stream> .+))
+                                                    )
+                                                )
+                                            )
+                                        )
+                                        $
+                                   /;
+            
+            if ( $item =~ /$header_pattern/ ) {
+                
+                $git{origin} = $+{stream} and next  if  $+{orig};
+                $git{branch} = $+{branch} and next  if  $+{head};
+                $git{commit} = $+{commit} and next  if  $+{comm};
+                
+                @git{qw/ahead behind/} = ( $+{a}, $+{b} ) and next  if  $+{ab};
+            }
+            
+            
+            ## file-status lines ref:
+            ##   M = modified
+            ##   A = added
+            ##   D = deleted
+            ##   C = copied
+            ##   R = renamed
+            ##   U = updated but unmerged
+            ##   ! = ignored
+            ##   ? = untracked
+            my $file_pattern = qr/^[12u] \h++ (?<st> [MADCRU?!.] ) (?<un> (?&st) )/;
+            
+            if ( $item =~ /$file_pattern/x ) {
+                $git{ignored   }++ and next  if  $+{st} eq '!';
+                $git{untracked }++ and next  if  $+{st} eq '?';
+                
+                $git{staged   }++  if  $+{st};
+                $git{unstaged }++  if  $+{un};
+                
+                $git{modified }++ and next  if  $+{un} eq 'M';
+                $git{added    }++ and next  if  $+{un} eq 'A';
+                $git{deleted  }++ and next  if  $+{un} eq 'D';
+                $git{copied   }++ and next  if  $+{un} eq 'C';
+                $git{renamed  }++ and next  if  $+{un} eq 'R';
+                $git{updated  }++ and next  if  $+{un} eq 'U';
+            }
         }
-        
-        
-        my $staged_count  =  grep -cE '^[[:alnum:]]+ [^[:blank:].][^[:blank:]]' <<< "$repo_status" | wc -l | xargs
-        $unstag_count  =  grep -cE '^[[:alnum:]]+ [^[:blank:]][^[:blank:].]' <<< "$repo_status" | wc -l | xargs
-
-
-        ## reference:
-        ##   M = modified
-        ##   A = added
-        ##   D = deleted
-        ##   C = copied
-        ##   R = renamed
-        ##   U = updated but unmerged
-        ##   ! = ignored
-        ##   ? = untracked
-        mod_count        =  grep -cE '^.M' <<< "$repo_status" | wc -l | xargs
-        add_count        =  grep -cE '^.A' <<< "$repo_status" | wc -l | xargs
-        del_count        =  grep -cE '^.D' <<< "$repo_status" | wc -l | xargs
-        cop_count        =  grep -cE '^.C' <<< "$repo_status" | wc -l | xargs
-        re_count         =  grep -cE '^.D' <<< "$repo_status" | wc -l | xargs
-        up_count         =  grep -cE '^.U' <<< "$repo_status" | wc -l | xargs
-        ignored_count    =  grep -ce '^!!' <<< "$repo_status" | wc -l | xargs
-        untracked_count  =  grep -ce '^??' <<< "$repo_status" | wc -l | xargs
 
     } else {
-        $local_path = "$full_path"
+        
+        $git{path_local} = $git{path_full};
+        
     }
 }
+
 
 ## Replaces gprompt-specific escapes with printf-parsible ANSI color escape wrapped in PS1-parsible non-printing-characters brackets
 #     exclamation points ('!') in  sed  substitutions are purely to increase legibility amonst a lot of backslashes
 #
-sub parse_format {
-  local string="$FORMAT"
+sub parse_format () {
+    my @stack = split "\b" => $cache{gformat};
 
-  ## merge all parallel color format markers
-  while [[ $( grep -E '\\c(([[:digit:]]+)|{([[:digit:];]+)})\\c(([[:digit:]]+)|{([[:digit:];]+)})' <<< "$string" ) ]]
-  do
-    string="$( $string =~ s!\\c(([[:digit:]]+)|{([[:digit:];]+)})\\c(([[:digit:]]+)|{([[:digit:];]+)})!\\c{\2\3;\5\6}!g )"
-  done
+    my $parsed = '';
 
+    $parsed =~ s/%([\w]+|[\w?!~^+-])/%{$1}/g;  # wrap all formatting codes in curly braces ('{}')
+    $parsed =~ s/\\c(\d+)(?![\d;])/\\c{$1}/g;  # wrap all color codes in curly braces ('{}')
+                  
+    $parsed =~ s/\\\[/\x{01}/g;  # replace all opening non-printing-character escapes ('\[') with the unicode start-of-header character
+    $parsed =~ s/\\\]/\x{02}/g;  # replace all closing non-printing-character escapes ('\]') with the unicode start-of-text character
+    $parsed =~ s/\\e/\x{1B}/g;   # replace all ANSI escape characters ('\e') with the unicode ESC character
 
-  string=$(
-    sed -E '
-              s/%([[:alnum:]]+|[[:alnum:]?!~^+_-])/%{\1}/g;
-                  ## wrap all formatting codes in curly braces ('{}')
-              s!\\\[!\\001!g;
-                  ## replace all opening non-printing-character escapes ('\[')
-              s!\\\]!\\002!g;
-                  ## replace all closing non-printing-character escapes ('\]')
-              s!\\e!\\033!g;
-                  ## replace all ANSI escape characters ('\e')
-
-              s!\\c(([[:digit:]]+)|{([[:digit:];]+)})!\\033[\2\3m!g;
-                  ## reformat user color-codes into ANSI valid escapes
-            # s!\\t<([[:digit:]]+)>!$(tput \1)!eg;
-                  ## reformat user tput-codes into tput commands
-              s!(\\033\[[[:digit:];]+m)!\\001\1\\002!g
-                  ## wrap all ANSI color-escapes in non-printing-character escapes
-           ' <<< "$string"
-  )
+    #$parsed =~ s/\\t<([[:digit:]]+)>/$(tput \1)/xg;  # reformat user tput-codes into tput commands
 
 
-  # ## this chunk condenses all parallel ANSI color-escapes and redundant non-printing-character escapes
-  # #
-  # while [[ $( grep -E '\\033\[([[:digit:];]+)m\\033\[([[:digit:];]+)m' <<< "$string" ) ]]
-  # do
-  #   string="$( $string =~ s!\\033\[([[:digit:];]+)m\\033\[([[:digit:];]+)m!\\033[\1;\2m!g )"
-  # done
+    ## merge all parallel color format markers
+    while ( $parsed =~ s/\\c  (?| (?<l>\d+) | {(?<l>[\d;]+)} )  (?<s>\h*)  \\c  (?| (?<r>\d+) | {(?<r>[\d;]+)} )/$+{s}\\c{$+{l};$+{r}}/gx ){};
+    $parsed =~ s/\\c  (?| (\d+) | {([\d;]+)} )/\x{1B}\x{5B}$1m/gx;  # reformat user color-codes into ANSI valid escapes
+    $parsed =~ s/(\x{1B}\x{5B}[\d;]+m)/\x{01}$1\x{02}/gx;  # wrap all ANSI color-escapes in non-printing-character escapes
 
-  # while [[ $( grep -vE '\\001\\001\\033\[([[:digit:];]+)m\\002\\002' <<< "$string" ) ]]
-  # do
-  #   string="$( $string =~ s!\\001\\001(\\033\[[[:digit:];]+m)\\002\\002!\\001\1\\002!g )"
-  # done
 
-  # while [[ $( grep -E '\\001\\033\[([[:digit:];]+)m\\002\\001\\033\[([[:digit:];]+)m\\002' <<< "$string" ) ]]
-  # do
-  #   string="$( $string =~ s!\\001\\033\[([[:digit:];]+)m\\002\\001\\033\[([[:digit:];]+)m\\002!\\001\\003[\1;\2m\\002!g )"
-  # done
+    ## this chunk condenses all parallel ANSI color-escapes and redundant non-printing-character escapes
+    #
+    while ( $parsed =~ s/ \x{1B}\x{5B}([\d;]+)m\x{1B}\x{5B}([\d;]+)m  /  \x{1B}\x{5B}$1;$2m /gx ){}
+    while ( $parsed =~ s/ \x{01} (\x{1B}\x{5B}[\d;]+m) \x{02}  /  \x{01}$1\x{02} /gx ){}
+    while ( $parsed =~ s/ \x{01}\x{1B}\x{5B} ([\d;]+)m  \x{02}\x{01}\x{1B}\x{5B} ([\d;]+)m \x{02}  /  \x{01}\x{03}\x{5B}$1;$2m\x{02} /gx ){}
 
-  echo "$string"
+    return $parsed;
 }
+
 
 ## Outputs the a populated git-prompt based on the contents of FORMAT (see the `set_format` function description for more information)
 #
 sub populate_prompt {
-  git_status
+    git_status();
 
-  local string=$(parse_format)
 
-  if [[ -n $repo_name ]]
-  then
+    # path_full     origin     parent_hash     ahead     staged      ignored      modified
+    # path_root     repo       merged_hash     behind    unstaged    untracked    added
+    # path_local    branch                                                        deleted
+    #               commit                                                        copied
+    #                                                                             renamed
+    #                                                                             updated
+
+
+    my $prompt = parse_format();
+
     # if in a git-repo, populate all format-strings
-    sed -E "
-            ## DIRECTORY INFO
-            s/%{p(ath)?}/%{parent_path}/g;                   s|%{parent_path}|$parent_path|g;
-            s/%{(d(ir(ectory)?)?|local)}/%{local_path}/g;    s|%{local_path}|$local_path|g;
-            s/%{f(ull(_path)?)?}/%{full_path}/g;             s|%{full_path}|$full_path|g;
+    if ( $git{repo_name} ) {
+        
+        ## DIRECTORY INFO
+        s/%((?<b>  {  )?   ( (parent_)?p(ath)?               )   (?(<b>)  }  ))/  $git{path_root}    /gx;
+        s/%((?<b>  {  )?   ( f(ull(_path)?)?                 )   (?(<b>)  }  ))/  $git{path_full}    /gx;
+        s/%((?<b>  {  )?   ( d(ir(ectory)?)? | local(_path)? )   (?(<b>)  }  ))/  $git{path_local}   /gx;
 
-            ## REPO INFO
-            s/%{r(epo)?}/%repo/g;                      s|%repo|$repo_name|g;
-            s/%{b(ranch)?}/%branch/g;                  s|%branch|$branch_name|g;
-            s/%{(c(om(mit)?)?|hash|sha)}/%commit/g;    s|%commit|$commit_hash|g;
+        ## REPO INFO
+        s/%((?<b>  {  )?      ( r(epo)?                   )      (?(<b>)  }  ))/  $git{repo}         /gx;
+        s/%((?<b>  {  )?      ( b(ranch)?                 )      (?(<b>)  }  ))/  $git{branch}       /gx;
+        s/%((?<b>  {  )?      ( c(om(mit)?)? | hash | sha )      (?(<b>)  }  ))/  $git{commit}       /gx;
 
-            ## BRANCH STATE
-            s/%{(\+|ahead)}/$ahead_count/g;
-            s/%{(\-|behind)}/$behind_count/g;
-            s/%{(\~|parent)}/$commit_parent/g;
-            s/%{(\^|merged)}/$commit_merged/g;
+        ## BRANCH STATE
+        s/%((?<b>  {  )?            ( \+  |  ahead  )            (?(<b>)  }  ))/  $git{ahead}        /gx;
+        s/%((?<b>  {  )?            ( \-  |  behind )            (?(<b>)  }  ))/  $git{behind}       /gx;
+        s/%((?<b>  {  )?            ( \~  |  parent )            (?(<b>)  }  ))/  $git{parent_hash}  /gx;
+        s/%((?<b>  {  )?            ( \^  |  merged )            (?(<b>)  }  ))/  $git{merged_hash}  /gx;
 
-            ## FILE STATUS MODES
-            s/%(s(taged)?|{s(taged)?})/$staged_count/g;
-            s/%(u(nstaged)?|{u(nstaged)?})/$unstag_count/g;
+        ## FILE STATUS MODES
+        s/%((?<b>  {  )?            ( s  | staged    )           (?(<b>)  }  ))/  $git{staged}       /gx;
+        s/%((?<b>  {  )?            ( u  | unstaged  )           (?(<b>)  }  ))/  $git{unstaged}     /gx;
+        s/%((?<b>  {  )?            ( \! | ignored   )           (?(<b>)  }  ))/  $git{ignored}      /gx;
+        s/%((?<b>  {  )?            ( \? | untracked )           (?(<b>)  }  ))/  $git{untracked}    /gx;
 
-            ## FILE STATUS COUNTS
-            s/%(mod(ified)?|{mod(ified)?})/$mod_count/g;
-            s/%(add(ed)?|{add(ed)?})/$add_count/g;
-            s/%(del(eted)?|{del(eted)?})/$del_count/g;
-            s/%(rem(oved)?|{rem(oved)?})/$rem_count/g;
-            s/%(cop(y|ied)?|{cop(y|ied)?})/$cop_count/g;
-            s/%(re(named)?|{re(named)?})/$re_count/g;
-            s/%(up(dated)?|{up(dated)?})/$up_count/g;
-            s/%(un(merged)?|{un(merged)?})/$un_count/g;
-            s/%([?]|{untracked})/$untracked_count/g;
-            s/%([!]|{ignored})/$ignored_count/g;
+        ## FILE STATUS COUNTS
+        s/%((?<b>  {  )?             ( mod(ified)? )             (?(<b>)  }  ))/  $git{modified}     /gx;
+        s/%((?<b>  {  )?             ( add(ed)?    )             (?(<b>)  }  ))/  $git{added}        /gx;
+        s/%((?<b>  {  )?             ( del(eted)?  )             (?(<b>)  }  ))/  $git{deleted}      /gx;
+        s/%((?<b>  {  )?             ( rem(oved)?  )             (?(<b>)  }  ))/  $git{deleted}      /gx;
+        s/%((?<b>  {  )?             ( cop(ied)?   )             (?(<b>)  }  ))/  $git{copied}       /gx;
+        s/%((?<b>  {  )?             ( re(named)?  )             (?(<b>)  }  ))/  $git{renamed}      /gx;
+        s/%((?<b>  {  )?             ( up(dated)?  )             (?(<b>)  }  ))/  $git{updated}      /gx;
+        s/%((?<b>  {  )?             ( un(merged)? )             (?(<b>)  }  ))/  $git{updated}      /gx;
+        
+    } else {
+        ## if not a git-repo, strip all remaining formatting characters except for  %d
+        sed -E "
+                s/%{f(ull(_path)?)?}/%{full_path}/g;    s|%full_path|$full_path|g;
 
-           " <<< "$string"
-  else
-    ## if not a git-repo, strip all remaining formatting characters except for  %d
-    sed -E "
-            s/%{f(ull(_path)?)?}/%{full_path}/g;    s|%full_path|$full_path|g;
+                s/%([[:alnum:]]+|[?!~^+-]|{[[:alnum:]]+})//g;
 
-            s/%([[:alnum:]]+|[?!~^+-]|{[[:alnum:]]+})//g;
+               " <<< "$string"
 
-           " <<< "$string"
-
-    ## strip all curly-brace wrapped content, recursively from the inside out
-    while [[ $( grep -m 1 -E '(^|[^\\]){([^\\{}]+|\\[^{}]|\\[{}])*}' <<< "$string" ) ]]
-    do
-      string="$( $string =~ s/(^|[^\\]){([^\\{}]+|\\[^{}]|\\[{}])*}/\1/g  )"
-    done
-  fi
+        ## strip all curly-brace wrapped content, recursively from the inside out
+        while [[ $( grep -m 1 -E '(^|[^\\]){([^\\{}]+|\\[^{}]|\\[{}])*}' <<< "$string" ) ]]
+        do
+            string="$( $string =~ s/(^|[^\\]){([^\\{}]+|\\[^{}]|\\[{}])*}/\1/g  )"
+        done
+    }
 }
 
 ## Removes blank/useless values wrapped in curly-braces, then subsequently removes ALL unescaped curly-braces!
